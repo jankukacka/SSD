@@ -62,8 +62,7 @@ def _argmax(tensor):
 def _assign_boxes(anchors, gt_boxes, overlap_threshold, num_classes):
     '''
     For each anchor find a bounding box with the highest overlap
-    Output of this step is an array shape:
-    [batch_size, number_boxes, 4 (= gt loc) + 1 (= indicator) + num_classes (= one hot encoded)]
+
 
     Currently only implemented for tf backend
 
@@ -73,6 +72,11 @@ def _assign_boxes(anchors, gt_boxes, overlap_threshold, num_classes):
         - num_classes: positive int. Number of classes including the background.
         - overlap threshold: float in range [0;1]. Minimum threshold to consider
                              an anchor responsible for a GT box
+
+    # Returns
+        - Tensor with shape: [batch_size,
+                              number_boxes,
+                              4 (= gt loc) + 1 (= indicator) + num_classes (= one hot encoded)]
     '''
     batch_size = K.shape(anchors)[0]
     num_anchors = K.shape(anchors)[1]
@@ -104,7 +108,6 @@ def _assign_boxes(anchors, gt_boxes, overlap_threshold, num_classes):
                              tf.ones(shape=(batch_size, 1)),
                              tf.one_hot(K.cast(selected_boxes[:,4], 'int32'), depth=num_classes)), axis=-1)
 
-        updates = tf.Print(updates, [tf.shape(updates)], message='updates.shape')
         update = tf.scatter_nd(indices=indices,
                                updates=updates,
                                shape=K.shape(result))
@@ -179,7 +182,62 @@ def _cross_entropy(y_true, y_pred):
     cross_entropy = - K.sum(y_true * K.log(y_pred), axis=-1)
     return cross_entropy
 
-def MultiboxLoss(y_true, y_pred, overlap_threshold=0.5, num_classes=4):
+def _get_hard_negatives(gt, conf, neg_ratio=3):
+    '''
+    Selects hard negatives and marks them as valid samples by setting their
+    indicator to 1. Keeps ratio of negatives / positives at most at neg_ratio.
+    Negatives are selected by their confidence about being background class.
+
+    # Arguments
+        - gt: Tensor of shape [batch_size,
+                               num_anchors,
+                               4 (= gt loc) + 1 (= indicator) + num_classes (= one hot encoded)]
+        - conf: Tensor of network predictions for bkg class with shape
+                [batch_size, num_anchors, 1]
+        - neg_ratio: float. Determines maximum negatives/positives ratio.
+                     Default is 3:1 (according to the original paper).
+    # Returns
+        - updated gt tensor with negative samples' indicators set to 1.
+    '''
+    batch_size = K.shape(gt)[0]
+    num_anchors = K.shape(gt)[1]
+    num_classes = K.shape(gt)[2] - 5
+
+    # Compute how many negatives each sample should have as
+    # min(unassigned, neg_ratio*num_positives)
+    num_unassigned = tf.count_nonzero(K.equal(gt[:,:,4],0), axis=-1, dtype='int32')
+    max_negative = neg_ratio * (num_anchors-num_unassigned)
+    num_negative = K.minimum(num_unassigned, max_negative)
+    num_negative = tf.Print(num_negative, [num_negative], message='num_negative: ', summarize=20)
+    max_num_negative = K.max(num_negative)
+    max_num_negative = tf.Print(max_num_negative, [max_num_negative], message='max_num_negative: ')
+
+    # Take top_k sorted by the confidence for class 0 multiplied by indicator-1
+    # to ensure that no box gets assigned twice.
+    # k = max(num_negative)
+    _, indices = tf.nn.top_k(conf*(gt[:,:,4]*(-1)), k=max_num_negative)
+    batch_indices = tf.tile(tf.reshape(tf.range(batch_size),
+                                       (batch_size, 1, 1)),
+                            (1, max_num_negative, 1))
+    indices = tf.concat((batch_indices,
+                         tf.expand_dims(indices, axis=-1), # anchor box indices
+                         tf.ones_like(batch_indices)*4), axis=-1) # 4 is the indicator index
+
+    # Mask out updates where k > num_negative
+    a = tf.tile(tf.expand_dims(tf.range(max_num_negative),axis=0),
+                (batch_size, 1))
+    b = tf.tile(tf.expand_dims(num_negative, axis=-1),
+                (1,max_num_negative))
+    updates = tf.where(a<b, tf.ones_like(a, dtype='float32'),
+                            tf.zeros_like(a, dtype='float32'))
+    updates = tf.Print(updates, [updates, indices], message='updates, indices:', summarize=100)
+
+    # Scatter add 1 to the indicators in the GT tensor
+    indicator_update = tf.scatter_nd(indices, updates, shape=K.shape(gt))
+    gt = gt + indicator_update
+    return gt
+
+def MultiboxLoss(y_true, y_pred, overlap_threshold=0.5, num_classes=4, alpha=1):
     '''
     Computes loss for the SSD network.
 
@@ -194,6 +252,12 @@ def MultiboxLoss(y_true, y_pred, overlap_threshold=0.5, num_classes=4):
                               [...]]) ]
         - y_pred: Tensor of predictions of the network. Format:
                   shape = (batch_size, number_boxes, 4 (= loc) + num_classes (= conf) + 4 (= anchors))
+        - num_classes: positive int. Number of predicted classes incl. background.
+        - overlap_threshold: float in range [0;1]. Minimum threshold to consider
+                             an anchor to be responsible for a GT box.
+
+    # Returns
+        - loss: 0D tensor localization error + alpha * classification error
     '''
     anchors = y_pred[:,:,-4:]
 
@@ -201,12 +265,16 @@ def MultiboxLoss(y_true, y_pred, overlap_threshold=0.5, num_classes=4):
                        overlap_threshold=overlap_threshold,
                        num_classes=num_classes)
 
+    gt = _get_hard_negatives(gt=gt, conf=y_pred[:,:,4])
+
     targets = tf.concat(((gt[:,:,:2] - anchors[:,:,:2]) / anchors[:,:,-2:],
                           tf.log(gt[:,:,2:4]/anchors[:,:,-2:])), axis=-1)
     loc_error = _l1_smooth_loss(y_true=gt[:,:,:4], y_pred=targets)
     conf_error = _cross_entropy(y_true=gt[:,:,5:], y_pred=y_pred[:,:,4:-4])
-    #anchors = y_pred[]
-    return tf.where(tf.equal(gt[:,:,4], 1.), loc_error, tf.zeros_like(loc_error)), tf.where(tf.equal(gt[:,:,4], 1.), conf_error, tf.zeros_like(conf_error))
+    return K.mean(loc_error+alpha*conf_error)
+    # return (gt,
+    #        tf.where(tf.equal(gt[:,:,4], 1.), loc_error, tf.zeros_like(loc_error)),
+    #        tf.where(tf.equal(gt[:,:,4], 1.), conf_error, tf.zeros_like(conf_error)))
 
 def test():
     bboxes = np.array([[[10,10,10,10,1/4],
@@ -228,46 +296,44 @@ def test():
                          [20,8,10,10],
                          [22,12,10,10]]]) * np.array([[[4]],[[1]]])
 
-    # bboxes = np.array([[[10,10,10,10,1],
-    #  [20,10,10,10,2],
-    #  [10,20,10,10,3]],
-    #                    [[10,10,10,10,1],
-    #                     [20,10,10,10,2],
-    #                     [10,20,10,10,3]]])
-    # anchors = np.array([[[5,5,10,10],
-    #                      [5,10,10,10],
-    #                      [10,5,10,10],
-    #                      [10,10,8,8],
-    #                      [20,8,10,10],
-    #                      [22,12,10,10]],
-    #                     [[5,5,10,10],
-    #                      [5,10,10,10],
-    #                      [10,5,10,10],
-    #                      [10,10,8,8],
-    #                      [20,8,10,10],
-    #                      [22,12,10,10]]])
+    offsets = np.ones_like(anchors)
+    preds = np.array([[[0.1,0.5,0.1,0.3],
+                       [0.1,0.5,0.1,0.3],
+                       [0.1,0.5,0.1,0.3],
+                       [0.1,0.5,0.1,0.3],
+                       [0.1,0.5,0.1,0.3],
+                       [0.1,0.5,0.1,0.3]],
+                      [[0.1,0.5,0.1,0.3],
+                       [0.1,0.5,0.1,0.3],
+                       [0.1,0.5,0.1,0.3],
+                       [0.1,0.5,0.1,0.3],
+                       [0.1,0.5,0.1,0.3],
+                       [0.1,0.5,0.1,0.3]]])
+
+    y_pred = np.concatenate((offsets, preds, anchors),axis=-1)
+
     a = K.placeholder(shape=(None,None, 5))
-    b = K.placeholder(shape=(None,None, 4))
+    b = K.placeholder(shape=(None,None, 12))
     #c = _iou(a,b)
     # d = tf.reduce_max(c)
     # d = tf.greater_equal(d, 0.5)
     #c = _assign_boxes(b,a, 0.1, 4)
-    c,d = MultiboxLoss(a,b,0.1,4)
-    f = K.function([a,b], [c,d])
-    assignment = f([bboxes, anchors])
+    c,d,e = MultiboxLoss(a,b,0.1,4)
+    f = K.function([a,b], [c,d,e])
+    assignment = f([bboxes, y_pred])
     #print assignment
     return assignment
 
-test()
+#test()
 
 #%%
-import tensorflow as tf
-import keras.backend as K
-import numpy as np
-
-a = tf.placeholder(shape=(None,))
-b = tf.constant(10)
-c = tf.constant(6)
-d = tf.div(b,c)
-f = K.function([], [d,a])
-f([])
+# import tensorflow as tf
+# import keras.backend as K
+# import numpy as np
+#
+# a = tf.placeholder(shape=(None,))
+# b = tf.constant(10)
+# c = tf.constant(6)
+# d = tf.div(b,c)
+# f = K.function([], [d,a])
+# f([])
