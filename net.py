@@ -6,7 +6,7 @@
 #  Implementation of SSD models
 # ------------------------------------------------------------------------------
 
-from keras.layers import Conv2D, Reshape, Concatenate, Input
+from keras.layers import Conv2D, Reshape, Concatenate, Input, Activation
 from keras.models import Model
 from anchor_generator_layer import AnchorGeneratorLayer
 
@@ -38,6 +38,7 @@ def Simple_SSD(num_classes=4):
     anchors = [0.5, 1, 2]
     net['bbox_conf_conv5_2'] = Conv2D(num_classes*len(anchors), (3,3), padding='same')(net['conv5_2'])
     net['resh_bbox_conf_conv5_2'] = Reshape((-1,num_classes))(net['bbox_conf_conv5_2'])
+    net['softmax_bbox_conf_conv5_2'] = Activation('softmax')(net['resh_bbox_conf_conv5_2'])
     net['bbox_loc_conv5_2']  = Conv2D(4*len(anchors), (3,3), padding='same')(net['conv5_2'])
     net['resh_bbox_loc_conv5_2'] = Reshape((-1,4))(net['bbox_loc_conv5_2'])
     net['anchor_conv5_2'] = AnchorGeneratorLayer(feature_stride=16, offset=55,
@@ -45,9 +46,9 @@ def Simple_SSD(num_classes=4):
 
     # From conv6_2
     anchors = [0.5, 1, 2]
-    net['bbox_conf_conv6_2'] = Conv2D(num_classes*len(anchors), (3,3), padding='same',
-                                      activation='softmax')(net['conv6_2'])
+    net['bbox_conf_conv6_2'] = Conv2D(num_classes*len(anchors), (3,3), padding='same')(net['conv6_2'])
     net['resh_bbox_conf_conv6_2'] = Reshape((-1,num_classes))(net['bbox_conf_conv6_2'])
+    net['softmax_bbox_conf_conv6_2'] = Activation('softmax')(net['resh_bbox_conf_conv6_2'])
     net['bbox_loc_conv6_2']  = Conv2D(4*len(anchors), (3,3), padding='same')(net['conv6_2'])
     net['resh_bbox_loc_conv6_2'] = Reshape((-1,4))(net['bbox_loc_conv6_2'])
     net['anchor_conv6_2'] = AnchorGeneratorLayer(feature_stride=32, offset=119,
@@ -55,8 +56,8 @@ def Simple_SSD(num_classes=4):
 
     net['cat_loc'] = Concatenate(axis=1)([net['resh_bbox_loc_conv5_2'],
                                           net['resh_bbox_loc_conv6_2']])
-    net['cat_conf'] = Concatenate(axis=1)([net['resh_bbox_conf_conv5_2'],
-                                           net['resh_bbox_conf_conv6_2']])
+    net['cat_conf'] = Concatenate(axis=1)([net['softmax_bbox_conf_conv5_2'],
+                                           net['softmax_bbox_conf_conv6_2']])
     net['cat_anc'] = Concatenate(axis=1)([net['anchor_conv5_2'],
                                           net['anchor_conv6_2']])
     net['output'] = Concatenate(axis=2)([net['cat_loc'],
