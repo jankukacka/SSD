@@ -48,7 +48,7 @@ class DataGenerator(object):
         print 'Finished.'
 
         print 'Preparing bounding boxes...'
-        self.image_index = self.images.keys()
+        self.image_index = self.images.keys()[:min(len(self.images.keys()),1000)]
         bboxes = {}
         for image in self.image_index:
             bboxes[image] = dsdk.bbox.numpy_to_bbox_info(bbox_metadata[image],

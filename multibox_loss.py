@@ -279,7 +279,8 @@ def MultiboxLoss(y_true, y_pred, overlap_threshold=0.5, num_classes=4, alpha=1):
     # Mask out localization loss of negative samples
     loc_error = tf.where(tf.equal(gt[:,:,5], 1.), loc_error, tf.zeros_like(loc_error))
 
-    loss = K.mean(loc_error+alpha*conf_error, axis=-1, keepdims=True)
+    loss = (K.sum(loc_error+alpha*conf_error, axis=-1, keepdims=True)
+            / (K.sum(gt[:,:,4], axis=-1, keepdims=True) + K.epsilon()))
     #loss = tf.Print(loss, [K.shape(loss)], message='loss.shape', summarize=100)
     return loss
 

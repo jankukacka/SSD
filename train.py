@@ -9,18 +9,28 @@
 # --
 import keras
 import time as t
+import cPickle
 # --
 from net import Simple_SSD
 from multibox_loss import MultiboxLoss
 from data import DataGenerator
 # --
 
+# ------------------------------------------------------------------------------
+#  Limit memory usage
+import tensorflow as tf
+from keras.backend.tensorflow_backend import set_session
+config = tf.ConfigProto()
+config.gpu_options.per_process_gpu_memory_fraction = 0.5
+set_session(tf.Session(config=config))
+# ------------------------------------------------------------------------------
+
 model = Simple_SSD()
 #model.summary()
 model.compile(loss=MultiboxLoss, optimizer='sgd')
 
-gen_train = DataGenerator(batch_size=1, folder_path='/media/Data2/Jan/py-faster-rcnn/data/sagittal_projections/cts_train_large')
-gen_val = DataGenerator(batch_size=1, folder_path='/media/Data2/Jan/py-faster-rcnn/data/sagittal_projections/cts_valid_large')
+gen_train = DataGenerator(batch_size=5, folder_path='/media/Data2/Jan/py-faster-rcnn/data/sagittal_projections/cts_train_large')
+gen_val = DataGenerator(batch_size=20, folder_path='/media/Data2/Jan/py-faster-rcnn/data/sagittal_projections/cts_valid_large')
 
 epochs = 30
 best_accuracy = 0.0
@@ -45,9 +55,9 @@ for e in xrange(epochs):
             results[key].extend(hist.history[key])
         else:
             results[key] = hist.history[key]
+    w = model.get_weights()
+    with open('output/simple_ssd/cts_sagittal_train/epoch_{}.pkl'.format(e), 'wb') as f:
+        cPickle.dump(w, f)
 
-    val_acc = hist.history['val_acc'][0]
-    if val_acc > best_accuracy:
-        best_weights = model.get_weights()
-        best_epoch = e + 1 # e is 0-indexed
-best_accuracy = val_acc
+print history
+#return history
