@@ -140,13 +140,14 @@ def _assign_boxes(anchors, gt_boxes, overlap_threshold, num_classes):
 
     ious, result, gt_assignment = tf.while_loop(cond, body, [ious, result, gt_assignment])
 
+    # This messes up the graph (output shapes), so we won't use it.
     def check_all_assigned(result, assignment):
         unassigned = assignment==0
         if np.any(unassigned):
             print 'Some GT boxes were not assigned.'
             print assignment
         return result
-    result = tf.py_func(check_all_assigned, [result, gt_assignment], 'float32', False)
+#    result = tf.py_func(check_all_assigned, [result, gt_assignment], 'float32', False)
 
     return result
 
@@ -264,17 +265,23 @@ def MultiboxLoss(y_true, y_pred, overlap_threshold=0.5, num_classes=4, alpha=1):
     gt = _assign_boxes(anchors=anchors, gt_boxes=y_true,
                        overlap_threshold=overlap_threshold,
                        num_classes=num_classes)
-
     gt = _get_hard_negatives(gt=gt, conf=y_pred[:,:,4])
 
     targets = tf.concat(((gt[:,:,:2] - anchors[:,:,:2]) / anchors[:,:,-2:],
                           tf.log(gt[:,:,2:4]/anchors[:,:,-2:])), axis=-1)
     loc_error = _l1_smooth_loss(y_true=gt[:,:,:4], y_pred=targets)
     conf_error = _cross_entropy(y_true=gt[:,:,5:], y_pred=y_pred[:,:,4:-4])
-    return K.mean(loc_error+alpha*conf_error)
-    # return (gt,
-    #        tf.where(tf.equal(gt[:,:,4], 1.), loc_error, tf.zeros_like(loc_error)),
-    #        tf.where(tf.equal(gt[:,:,4], 1.), conf_error, tf.zeros_like(conf_error)))
+
+    # Mask out loss of invalid anchors (have indicator == 0)
+    loc_error = tf.where(tf.equal(gt[:,:,4], 1.), loc_error, tf.zeros_like(loc_error))
+    conf_error = tf.where(tf.equal(gt[:,:,4], 1.), conf_error, tf.zeros_like(conf_error))
+
+    # Mask out localization loss of negative samples
+    loc_error = tf.where(tf.equal(gt[:,:,5], 1.), loc_error, tf.zeros_like(loc_error))
+
+    loss = K.mean(loc_error+alpha*conf_error, axis=-1, keepdims=True)
+    #loss = tf.Print(loss, [K.shape(loss)], message='loss.shape', summarize=100)
+    return loss
 
 def test():
     bboxes = np.array([[[10,10,10,10,1/4],
@@ -312,20 +319,21 @@ def test():
 
     y_pred = np.concatenate((offsets, preds, anchors),axis=-1)
 
-    a = K.placeholder(shape=(None,None, 5))
-    b = K.placeholder(shape=(None,None, 12))
+    a = K.placeholder(shape=(2,3, 5))
+    b = K.placeholder(shape=(None, None, 12))
     #c = _iou(a,b)
     # d = tf.reduce_max(c)
     # d = tf.greater_equal(d, 0.5)
     #c = _assign_boxes(b,a, 0.1, 4)
-    c,d,e = MultiboxLoss(a,b,0.1,4)
-    f = K.function([a,b], [c,d,e])
+    c = MultiboxLoss(a,b,0.1,4)
+    f = K.function([a,b], [c])
     assignment = f([bboxes, y_pred])
     #print assignment
-    return assignment
+    return assignment, c
 
-#test()
+#a,c = test()
 
+#print c,K.shape(c)
 #%%
 # import tensorflow as tf
 # import keras.backend as K

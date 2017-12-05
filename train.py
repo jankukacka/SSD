@@ -7,7 +7,9 @@
 # ------------------------------------------------------------------------------
 
 from net import Simple_SSD
+from multibox_loss import MultiboxLoss
 import keras
 
 model = Simple_SSD()
 model.summary()
+model.compile(loss=MultiboxLoss, optimizer='sgd')
