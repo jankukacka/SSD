@@ -178,7 +178,7 @@ def _cross_entropy(y_true, y_pred):
     # Returns
         cross_entropy: Cross entropy, tensor of shape (?, num_boxes).
     """
-    y_pred = tf.Print(y_pred, [y_pred, tf.shape(y_pred), y_true, tf.shape(y_true)], message='y_pred, y_pred.shape, y_true, y_true.shape:', summarize=100)
+    #y_pred = tf.Print(y_pred, [y_pred, tf.shape(y_pred), y_true, tf.shape(y_true)], message='y_pred, y_pred.shape, y_true, y_true.shape:', summarize=100)
     y_pred = K.maximum(K.minimum(y_pred, 1 - K.epsilon()), K.epsilon())
     cross_entropy = - K.sum(y_true * K.log(y_pred), axis=-1)
     return cross_entropy
@@ -209,9 +209,9 @@ def _get_hard_negatives(gt, conf, neg_ratio=3):
     num_unassigned = tf.count_nonzero(K.equal(gt[:,:,4],0), axis=-1, dtype='int32')
     max_negative = neg_ratio * (num_anchors-num_unassigned)
     num_negative = K.minimum(num_unassigned, max_negative)
-    num_negative = tf.Print(num_negative, [num_negative], message='num_negative: ', summarize=20)
+    #num_negative = tf.Print(num_negative, [num_negative], message='num_negative: ', summarize=20)
     max_num_negative = K.max(num_negative)
-    max_num_negative = tf.Print(max_num_negative, [max_num_negative], message='max_num_negative: ')
+    #max_num_negative = tf.Print(max_num_negative, [max_num_negative], message='max_num_negative: ')
 
     # Take top_k sorted by the confidence for class 0 multiplied by indicator-1
     # to ensure that no box gets assigned twice.
@@ -231,7 +231,7 @@ def _get_hard_negatives(gt, conf, neg_ratio=3):
                 (1,max_num_negative))
     updates = tf.where(a<b, tf.ones_like(a, dtype='float32'),
                             tf.zeros_like(a, dtype='float32'))
-    updates = tf.Print(updates, [updates, indices], message='updates, indices:', summarize=100)
+    #updates = tf.Print(updates, [updates, indices], message='updates, indices:', summarize=100)
 
     # Scatter add 1 to the indicators in the GT tensor
     indicator_update = tf.scatter_nd(indices, updates, shape=K.shape(gt))
