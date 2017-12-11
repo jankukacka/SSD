@@ -10,7 +10,7 @@
 import numpy as np
 import os
 # --
-from random import shuffle
+import random
 # --
 import dataset_sdk as dsdk
 import dataset_sdk.bbox
@@ -77,7 +77,7 @@ class DataGenerator(object):
         self.steps_per_epoch = len(self.image_index) // batch_size
 
 
-    def Generate(self):
+    def Generate(self, shuffle=True):
         num_keys = len(self.image_index)
 
         def _prepare_batch(inputs, targets):
@@ -105,7 +105,8 @@ class DataGenerator(object):
         targets = []
         inputs = []
         while True:
-            shuffle(self.image_index)
+            if shuffle:
+                random.shuffle(self.image_index)
             keys = self.image_index
             for key in keys:
                 targets.append(self.filtered_bboxes[key])
