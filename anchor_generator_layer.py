@@ -16,7 +16,7 @@ class AnchorGeneratorLayer(Layer):
     Layer generating anchor bounding boxes for variable shaped input
     '''
 
-    def __init__(self, feature_stride, offset, aspect_ratios=[1], **kwargs):
+    def __init__(self, feature_stride, offset, aspect_ratios=[1], scale=1, **kwargs):
         '''
         # Arguments
             - feature_stride: int. Determines stride of features at the input
@@ -25,11 +25,14 @@ class AnchorGeneratorLayer(Layer):
                       due to using 'valid' convolution mode. Set to 0 if
                       using 'same' mode.
             - aspect_ratios: iterable of aspect ratios (w/h) of anchor boxes
+            - scale: positive float. Determines the scale of the bounding boxes.
+                     If scale == 1, bboxes have width==feature_stride
         '''
 
         self.aspect_ratios = aspect_ratios[:]   # create a copy of the list
         self.feature_stride = feature_stride
         self.offset = offset
+        self.scale = scale
         super(AnchorGeneratorLayer, self).__init__(**kwargs)
 
     def compute_output_shape(self, input_shape):
@@ -81,13 +84,17 @@ class AnchorGeneratorLayer(Layer):
         anchors_centers = K.cast(anchors_centers, 'float32')
 
         ar = np.array(self.aspect_ratios)
-        size = self.feature_stride
+        size = self.feature_stride * self.scale
         widths = size*ar
         heights = size/ar
         sizes = K.variable(np.transpose(np.vstack((widths, heights)), (1,0)))
-        sizes = K.reshape(K.tile(sizes, (1,width*height)), (-1,2))
 
-        anchors_tensor = K.reshape(K.stack((anchors_centers, sizes), axis=1), (-1,4))
+        sizes = K.reshape(sizes, (1,-1))
+        sizes = K.tile(sizes, (1,width*height))
+        sizes = K.reshape(sizes, (-1,2))
+
+        #anchors_tensor = K.reshape(K.stack((anchors_centers, sizes), axis=1), (-1,4))
+        anchors_tensor = K.concatenate((anchors_centers, sizes), axis=-1)
         anchors_tensor = K.expand_dims(anchors_tensor, 0)
         pattern = (batch_size, 1, 1)
         anchors_tensor = K.tile(anchors_tensor, pattern)
