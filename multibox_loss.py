@@ -186,8 +186,9 @@ def _cross_entropy(y_true, y_pred):
 def _get_hard_negatives(gt, conf, neg_ratio=3):
     '''
     Selects hard negatives and marks them as valid samples by setting their
-    indicator to 1. Keeps ratio of negatives / positives at most at neg_ratio.
-    Negatives are selected by their confidence about being background class.
+    indicator to 1 and target class to background. Keeps ratio of negatives /
+    positives at most at neg_ratio. Negatives are selected by their confidence
+    about being background class.
 
     # Arguments
         - gt: Tensor of shape [batch_size,
@@ -209,20 +210,25 @@ def _get_hard_negatives(gt, conf, neg_ratio=3):
     num_unassigned = tf.count_nonzero(K.equal(gt[:,:,4],0), axis=-1, dtype='int32')
     max_negative = neg_ratio * (num_anchors-num_unassigned)
     num_negative = K.minimum(num_unassigned, max_negative)
-    #num_negative = tf.Print(num_negative, [num_negative], message='num_negative: ', summarize=20)
+    # num_negative = tf.Print(num_negative, [num_negative], message='num_negative: ', summarize=20)
     max_num_negative = K.max(num_negative)
-    #max_num_negative = tf.Print(max_num_negative, [max_num_negative], message='max_num_negative: ')
+    # max_num_negative = tf.Print(max_num_negative, [max_num_negative], message='max_num_negative: ')
 
     # Take top_k sorted by the confidence for class 0 multiplied by indicator-1
     # to ensure that no box gets assigned twice.
     # k = max(num_negative)
-    _, indices = tf.nn.top_k(conf*(gt[:,:,4]*(-1)), k=max_num_negative)
+    _, indices = tf.nn.top_k(conf*(-gt[:,:,4]+1), k=max_num_negative)
     batch_indices = tf.tile(tf.reshape(tf.range(batch_size),
                                        (batch_size, 1, 1)),
                             (1, max_num_negative, 1))
-    indices = tf.concat((batch_indices,
-                         tf.expand_dims(indices, axis=-1), # anchor box indices
-                         tf.ones_like(batch_indices)*4), axis=-1) # 4 is the indicator index
+    # indices to indicator update
+    indices1 = tf.concat((batch_indices,
+                          tf.expand_dims(indices, axis=-1), # anchor box indices
+                          tf.ones_like(batch_indices)*4), axis=-1) # 4 is the indicator index
+    # indices to target class update
+    indices2 = tf.concat((batch_indices,
+                          tf.expand_dims(indices, axis=-1), # anchor box indices
+                          tf.ones_like(batch_indices)*5), axis=-1) # 5 is the background class index
 
     # Mask out updates where k > num_negative
     a = tf.tile(tf.expand_dims(tf.range(max_num_negative),axis=0),
@@ -231,11 +237,50 @@ def _get_hard_negatives(gt, conf, neg_ratio=3):
                 (1,max_num_negative))
     updates = tf.where(a<b, tf.ones_like(a, dtype='float32'),
                             tf.zeros_like(a, dtype='float32'))
-    #updates = tf.Print(updates, [updates, indices], message='updates, indices:', summarize=100)
+    # updates = tf.Print(updates, [updates, indices], message='updates, indices:', summarize=500)
 
     # Scatter add 1 to the indicators in the GT tensor
-    indicator_update = tf.scatter_nd(indices, updates, shape=K.shape(gt))
-    gt = gt + indicator_update
+    indicator_update = tf.scatter_nd(indices1, updates, shape=K.shape(gt))
+    class_update = tf.scatter_nd(indices2, updates, shape=K.shape(gt))
+    gt = gt + indicator_update + class_update
+    return gt
+
+def _get_boundary_mask(anchors):
+    '''
+    Creates mask for anchors on the image boundary.
+    # TODO: For now input size is fixed to 512x512. Find out how to make it dynamic.
+
+    # Returns:
+        - mask: Tensor of shape [batch_size, num_anchors, 1].
+                Has 0 if anchor is on the image boundary, 1 otherwise.
+    '''
+    batch_size = K.shape(anchors)[0]
+    num_anchors = K.shape(anchors)[1]
+    # How to get input shape to know the maximum allowed values???
+    upper_left = anchors[:,:,:2] - .5*anchors[:,:,2:4]
+    lower_right = upper_left + anchors[:,:,2:4]
+    updates1 = tf.where(K.any(K.less_equal(upper_left,0), axis=-1, keepdims=True),
+                       tf.zeros(shape=(batch_size, num_anchors, 1)),
+                       tf.ones(shape=(batch_size, num_anchors, 1)))
+    updates2 = tf.where(K.any(K.greater_equal(lower_right,512), axis=-1, keepdims=True),
+                       tf.zeros(shape=(batch_size, num_anchors, 1)),
+                       tf.ones(shape=(batch_size, num_anchors, 1)))
+    return updates1*updates2
+
+def _ignore_boundary_boxes(gt, boundary_mask):
+    '''
+    Set indicator of anchor boxes overlapping the boundary to 0.
+
+    # Arguments:
+        gt: Tensor of shape [batch_size,
+                             num_anchors,
+                             4 (= gt loc) + 1 (= indicator) + num_classes (= one hot encoded)]
+        boundary_mask: Tensor of shape [batch_size, num_anchors, 1].
+                       Has 0 for anchors on the boundary and 1 for the others.
+    # Returns:
+        updated gt tensor.
+    '''
+    gt = K.concatenate((gt[:,:,:4],gt[:,:,4:5]*boundary_mask,gt[:,:,5:]), axis=-1)
     return gt
 
 def MultiboxLoss(y_true, y_pred, overlap_threshold=0.5, num_classes=4, alpha=1):
@@ -265,23 +310,32 @@ def MultiboxLoss(y_true, y_pred, overlap_threshold=0.5, num_classes=4, alpha=1):
     gt = _assign_boxes(anchors=anchors, gt_boxes=y_true,
                        overlap_threshold=overlap_threshold,
                        num_classes=num_classes)
-    gt = _get_hard_negatives(gt=gt, conf=y_pred[:,:,4])
+    boundary_mask = _get_boundary_mask(anchors)
+    gt = _get_hard_negatives(gt=gt, conf=(y_pred[:,:,4:5]*boundary_mask)[:,:,0])
+    gt = _ignore_boundary_boxes(gt, boundary_mask)
+
+    #gt = tf.Print(gt, [tf.count_nonzero(gt[:,:,4], axis=-1)], message='C.# of samples with indicator on:')
 
     targets = tf.concat(((gt[:,:,:2] - anchors[:,:,:2]) / anchors[:,:,-2:],
                           tf.log(gt[:,:,2:4]/anchors[:,:,-2:])), axis=-1)
-    loc_error = _l1_smooth_loss(y_true=gt[:,:,:4], y_pred=targets)
+    targets = tf.where(tf.is_finite(targets), targets, tf.zeros_like(targets))
+    loc_error = _l1_smooth_loss(y_true=targets, y_pred=y_pred[:,:,:4])
     conf_error = _cross_entropy(y_true=gt[:,:,5:], y_pred=y_pred[:,:,4:-4])
+
+    # loc_error = tf.Print(loc_error, [gt[0,:10,2:4], anchors[0,:5,-2:]], message='gt size, anchor size', summarize=850)
+    # loc_error = tf.Print(loc_error, [gt[0,:,4]], message='indicator', summarize=850)
 
     # Mask out loss of invalid anchors (have indicator == 0)
     loc_error = tf.where(tf.equal(gt[:,:,4], 1.), loc_error, tf.zeros_like(loc_error))
     conf_error = tf.where(tf.equal(gt[:,:,4], 1.), conf_error, tf.zeros_like(conf_error))
 
     # Mask out localization loss of negative samples
-    loc_error = tf.where(tf.equal(gt[:,:,5], 1.), loc_error, tf.zeros_like(loc_error))
+    loc_error = tf.where(tf.equal(gt[:,:,5], 1.), tf.zeros_like(loc_error), loc_error)
+    # loc_error = tf.Print(loc_error, [loc_error[0], conf_error[0]], message='loc_error, conf_error', summarize=850)
 
     loss = (K.sum(loc_error+alpha*conf_error, axis=-1, keepdims=True)
             / (K.sum(gt[:,:,4], axis=-1, keepdims=True) + K.epsilon()))
-    #loss = tf.Print(loss, [K.shape(loss)], message='loss.shape', summarize=100)
+    #loss = tf.Print(loss, [loss], message='loss', summarize=10)
     return loss
 
 def test():
