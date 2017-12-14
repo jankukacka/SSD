@@ -23,7 +23,7 @@ class DataGenerator(object):
     Currently works with sagittal projections augmented dataset.
     '''
 
-    def __init__(self, batch_size, folder_path, padding=0, min_voxels=500):
+    def __init__(self, batch_size, folder_path, padding=0, min_voxels=500,max_images=-1):
         '''
         Initializes the data generator.
 
@@ -34,6 +34,9 @@ class DataGenerator(object):
                        GT bounding boxes. Default 0.
             - min_voxels: positive int. Minimum number of pixels to consider a
                           bounding box. Smaller ones are ignored. Default 500.
+            - max_images: int. Limits the number of images to use for the
+                          generator. If max_images < 0 or
+                          max_images > total_images, all images will be used.
         '''
         self.batch_size = batch_size
         # 3 vertebra categories
@@ -48,7 +51,8 @@ class DataGenerator(object):
         print 'Finished.'
 
         print 'Preparing bounding boxes...'
-        self.image_index = self.images.keys()[:min(len(self.images.keys()),1000)]
+        limit = len(self.images.keys()) if max_images < 0 else max_images
+        self.image_index = self.images.keys()[:min(len(self.images.keys()),limit)]
         bboxes = {}
         for image in self.image_index:
             bboxes[image] = dsdk.bbox.numpy_to_bbox_info(bbox_metadata[image],
@@ -95,6 +99,7 @@ class DataGenerator(object):
 
             for i in xrange(self.batch_size):
                 s = inputs[i].shape
+                input_tensor[i] = inputs[i].min() # pad image with the lowest value (simulating air)
                 input_tensor[i, :s[0], :s[1], 0] = inputs[i]
 
                 bboxes = targets[i]['slices'][0]['bboxes']
