@@ -6,9 +6,14 @@
 #  Implementation of SSD models
 # ------------------------------------------------------------------------------
 
+# --
+from math import sqrt
+# --
 from keras.layers import Conv2D, Reshape, Concatenate, Input, Activation
 from keras.models import Model
+# --
 from anchor_generator_layer import AnchorGeneratorLayer
+# --
 
 def Simple_SSD(num_classes=4):
     '''
@@ -45,11 +50,11 @@ def Simple_SSD(num_classes=4):
     #                                              aspect_ratios=anchors)(net['conv5_2'])
 
     # From conv6_2
-    anchors = [0.5, 1]
+    anchors = [sqrt(0.5), 1]
     net['bbox_conf_conv6_2'] = Conv2D(num_classes*len(anchors), (3,3), padding='same')(net['conv6_2'])
     net['resh_bbox_conf_conv6_2'] = Reshape((-1,num_classes))(net['bbox_conf_conv6_2'])
     net['softmax_bbox_conf_conv6_2'] = Activation('softmax')(net['resh_bbox_conf_conv6_2'])
-    net['bbox_loc_conv6_2']  = Conv2D(4*len(anchors), (3,3), padding='same')(net['conv6_2'])
+    net['bbox_loc_conv6_2']  = Conv2D(4*len(anchors), (3,3), padding='same', name='conv6_2_bbox_loc')(net['conv6_2'])
     net['resh_bbox_loc_conv6_2'] = Reshape((-1,4))(net['bbox_loc_conv6_2'])
     net['anchor_conv6_2'] = AnchorGeneratorLayer(feature_stride=32, offset=0, #119
                                                  aspect_ratios=anchors, scale=2)(net['conv6_2'])

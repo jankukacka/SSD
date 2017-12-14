@@ -63,14 +63,14 @@ class AnchorGeneratorLayer(Layer):
         width = input_shape[1]
         height = input_shape[2]
         # following two things simulate meshgrid(xrange(height), xrange(width))
-        anchors_x = K.tile(tf.range(width), [height]) # replace tf.range for K.arange
+        anchors_y = K.tile(tf.range(height), [width]) # replace tf.range for K.arange
                                              # once tensor input is supported
                                              # same in the following:
-        anchors_y = K.reshape(
+        anchors_x = K.reshape(
                         K.permute_dimensions(
                             K.tile(
-                                K.expand_dims(tf.range(height), axis=0),
-                                (width,1)),
+                                K.expand_dims(tf.range(width), axis=0),
+                                (height,1)),
                             (1,0)),
                         (width*height,))
         anchors_centers = K.permute_dimensions(
