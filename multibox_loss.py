@@ -301,6 +301,8 @@ def MultiboxLoss(y_true, y_pred, overlap_threshold=0.5, num_classes=4, alpha=1):
         - num_classes: positive int. Number of predicted classes incl. background.
         - overlap_threshold: float in range [0;1]. Minimum threshold to consider
                              an anchor to be responsible for a GT box.
+        - alpha: positive float. Multiplier of the classification error part of
+                 the loss. See Returns for details.
 
     # Returns
         - loss: 0D tensor localization error + alpha * classification error
