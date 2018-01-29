@@ -9,10 +9,13 @@
 # --
 import numpy as np
 import os
-# --
 import random
 # --
+from math import sqrt
+# --
 from data_augmenter import DataAugmenter
+from anchor_generator_layer import AnchorGenerator
+from anchor_assignment import Match
 
 import dataset_sdk as dsdk
 import dataset_sdk.bbox
@@ -182,6 +185,10 @@ class OnlineDataGenerator(object):
         self.steps_per_epoch = len(self.imageset_list) // batch_size
 
         self.augmenter = DataAugmenter(cts_root_path, **settings)
+        self.anchor_generator = AnchorGenerator(feature_stride=32,
+                                                offset=0,
+                                                aspect_ratios=[sqrt(0.5), 1],
+                                                scale=2)
 
 
     def get_augmented_img(self, image_id, depth=0):
@@ -241,7 +248,13 @@ class OnlineDataGenerator(object):
                 bboxes = targets[i]['slices'][0]['bboxes']
                 for j in xrange(len(targets[i]['slices'][0]['bboxes'])):
                     target_tensor[i,j, :5] = dsdk.bbox.bbox_to_ccwhl(bboxes[j])
-                    target_tensor[i,j, :2] += pad # adjust for padding
+                    target_tensor[i,j, :2] += pad[::-1] # adjust for padding
+
+            anchors = self.anchor_generator.Generate(input_tensor.shape)
+            target_tensor = Match(target_tensor, anchors, len(self.classes), .3, (input_tensor.shape[2],input_tensor.shape[1]))
+            # print target_tensor[np.sum(target_tensor[:,:,4:], axis=-1)==1,:4]
+            ## This includes also anchors in the data
+            # target_tensor = np.concatenate((target_tensor, anchors), axis=-1)
             return input_tensor, target_tensor
 
         targets = []

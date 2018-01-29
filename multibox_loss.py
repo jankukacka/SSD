@@ -147,7 +147,7 @@ def _assign_boxes(anchors, gt_boxes, overlap_threshold, num_classes):
             print 'Some GT boxes were not assigned.'
             print assignment
         return result
-#    result = tf.py_func(check_all_assigned, [result, gt_assignment], 'float32', False)
+    #    result = tf.py_func(check_all_assigned, [result, gt_assignment], 'float32', False)
 
     return result
 
@@ -293,11 +293,10 @@ def MultiboxLoss(y_true, y_pred, overlap_threshold=0.5, num_classes=4, alpha=1):
     4. Compute cross entropy on confidence
 
     # Arguments
-        - y_true: List of GT boxes for each image in batch. Format:
-                  [ np.array([[center_x, center_y, width, height, class],
-                              [...]]) ]
+        - y_true: List of desired predictions of the format:
+                  (batch_size, number_boxes, 4 (= desired loc) + num_classes)
         - y_pred: Tensor of predictions of the network. Format:
-                  shape = (batch_size, number_boxes, 4 (= loc) + num_classes (= conf) + 4 (= anchors))
+                  shape = (batch_size, number_boxes, 4 (= loc) + num_classes (= conf))
         - num_classes: positive int. Number of predicted classes incl. background.
         - overlap_threshold: float in range [0;1]. Minimum threshold to consider
                              an anchor to be responsible for a GT box.
@@ -307,36 +306,45 @@ def MultiboxLoss(y_true, y_pred, overlap_threshold=0.5, num_classes=4, alpha=1):
     # Returns
         - loss: 0D tensor localization error + alpha * classification error
     '''
-    anchors = y_pred[:,:,-4:]
+    # pred_anchors = y_pred[:,:,-4:]
+    # gt_anchors = y_true[:,:,-4:]
+    # y_pred = y_pred[:,:,:-4]
+    # y_true = y_true[:,:,:-4]
+    # y_pred = tf.Print(y_pred, [K.shape(pred_anchors)], message='pred_anchors', summarize=100)
+    # y_pred = tf.Print(y_pred, [K.shape(gt_anchors)], message='gt_anchors', summarize=100)
+    #y_pred = tf.Print(y_pred, [y_pred], message='y_pred', summarize=100)
 
-    gt = _assign_boxes(anchors=anchors, gt_boxes=y_true,
-                       overlap_threshold=overlap_threshold,
-                       num_classes=num_classes)
-    boundary_mask = _get_boundary_mask(anchors)
-    gt = _get_hard_negatives(gt=gt, conf=(y_pred[:,:,4:5]*boundary_mask)[:,:,0])
-    gt = _ignore_boundary_boxes(gt, boundary_mask)
+    # boundary_mask = _get_boundary_mask(anchors)
+    # gt = _get_hard_negatives(gt=gt, conf=(y_pred[:,:,4:5]*boundary_mask)[:,:,0])
+    # gt = _ignore_boundary_boxes(gt, boundary_mask)
 
     #gt = tf.Print(gt, [tf.count_nonzero(gt[:,:,4], axis=-1)], message='C.# of samples with indicator on:')
 
-    targets = tf.concat(((gt[:,:,:2] - anchors[:,:,:2]) / anchors[:,:,-2:],
-                          tf.log(gt[:,:,2:4]/anchors[:,:,-2:])), axis=-1)
-    targets = tf.where(tf.is_finite(targets), targets, tf.zeros_like(targets))
-    loc_error = _l1_smooth_loss(y_true=targets, y_pred=y_pred[:,:,:4])
-    conf_error = _cross_entropy(y_true=gt[:,:,5:], y_pred=y_pred[:,:,4:-4])
+    # targets = tf.concat(((gt[:,:,:2] - anchors[:,:,:2]) / anchors[:,:,-2:],
+    #                       tf.log(gt[:,:,2:4]/anchors[:,:,-2:])), axis=-1)
+    # targets = tf.where(tf.is_finite(targets), targets, tf.zeros_like(targets))
+    loc_error = _l1_smooth_loss(y_true=y_true[:,:,:4], y_pred=y_pred[:,:,:4])
+    conf_error = _cross_entropy(y_true=y_true[:,:,4:], y_pred=y_pred[:,:,4:])
 
     # loc_error = tf.Print(loc_error, [gt[0,:10,2:4], anchors[0,:5,-2:]], message='gt size, anchor size', summarize=850)
     # loc_error = tf.Print(loc_error, [gt[0,:,4]], message='indicator', summarize=850)
 
-    # Mask out loss of invalid anchors (have indicator == 0)
-    loc_error = tf.where(tf.equal(gt[:,:,4], 1.), loc_error, tf.zeros_like(loc_error))
-    conf_error = tf.where(tf.equal(gt[:,:,4], 1.), conf_error, tf.zeros_like(conf_error))
+    ## Mask out loss of invalid anchors (have sum of classes == 0)
+    loc_error = tf.where(tf.equal(K.sum(y_true[:,:,4:], axis=-1), 1.), loc_error, tf.zeros_like(loc_error))
+    conf_error = tf.where(tf.equal(K.sum(y_true[:,:,4:], axis=-1), 1.), conf_error, tf.zeros_like(conf_error))
 
-    # Mask out localization loss of negative samples
-    loc_error = tf.where(tf.equal(gt[:,:,5], 1.), tf.zeros_like(loc_error), loc_error)
+    ## Mask out localization loss of negative samples
+    loc_error = tf.where(tf.equal(y_true[:,:,4], 1.), tf.zeros_like(loc_error), loc_error)
     # loc_error = tf.Print(loc_error, [loc_error[0], conf_error[0]], message='loc_error, conf_error', summarize=850)
 
-    loss = (K.sum(loc_error+alpha*conf_error, axis=-1, keepdims=True)
-            / (K.sum(gt[:,:,4], axis=-1, keepdims=True) + K.epsilon()))
+    loss = K.sum(loc_error+alpha*conf_error, axis=-1, keepdims=True)
+    normalizer = K.expand_dims(K.sum(y_true[:,:,4:], axis=(1,2)), axis=-1)
+
+
+    # loss = tf.Print(loss, [loss, normalizer], message='loss', summarize=10)
+
+
+    loss = (loss / (normalizer + K.epsilon()))
     #loss = tf.Print(loss, [loss], message='loss', summarize=10)
     return loss
 

@@ -18,6 +18,10 @@ from data import OnlineDataGenerator
 from weightnorm import SGDWithWeightnorm, data_based_init
 # --
 
+import os
+#os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+
+
 # ------------------------------------------------------------------------------
 #  Limit memory usage
 import tensorflow as tf
@@ -42,13 +46,13 @@ if use_two_classes:
 
 aug_settings_train = {
     'use_crop': True,
-    'zmuv_mean': 0,#209.350884188,
-    'zmuv_std': 1#353.816477769
+    'zmuv_mean': 209.350884188,
+    'zmuv_std': 353.816477769
 }
 aug_settings_val = {
     'use_crop': True,
-    'zmuv_mean': 0,#-103.361759224,
-    'zmuv_std': 1#363.301491674
+    'zmuv_mean': -103.361759224,
+    'zmuv_std': 363.301491674
 }
 gen_train = OnlineDataGenerator(batch_size=2, imageset_name='train_large',
                                 cts_root_path='/media/Data/Datasets/ct-spine',
@@ -62,11 +66,13 @@ data_val = next(gen_val.Generate())
 
 model = Residual_SSD(num_classes)
 #model.summary()
-# opt = SGDWithWeightnorm(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
-# data_based_init(model, [next(gen_train.Generate()) for _ in range(100)])
+## Use Weightnorm with data-based initialization
+opt = SGDWithWeightnorm(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
+data_based_init(model, [next(gen_train.Generate()) for _ in range(100)])
 
-## Use Adam with pretrained weights
-opt = keras.optimizers.Adam(lr=.0001)
+## Use Adam
+# opt = keras.optimizers.Adam(lr=.0001)
+## Use pre-trained weights
 #with open('output/simple_ssd/cts_sagittal_train/epoch_{:d}.pkl'.format(11)) as f:
 #    w = cPickle.load(f)
 #model.set_weights(w)
@@ -79,7 +85,9 @@ callback = keras.callbacks.TensorBoard(histogram_freq=1,
                                        write_graph=True,
                                        write_grads=True,
                                        write_images=True,
-                                       log_dir='./logs/adam_3')
+                                       log_dir='./logs/weightnorm_3')
+reduce_lr = keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5,
+                              patience=20, mode='min', verbose='1')
 
 epochs = 1
 best_accuracy = 0.0
@@ -90,11 +98,11 @@ for e in xrange(epochs):
     tic = t.clock()
     hist = model.fit_generator(gen_train.Generate(),
                      steps_per_epoch=gen_train.steps_per_epoch,
-                     epochs=50, verbose=1,
+                     epochs=150, verbose=1,
                      validation_data=data_val,#gen_val.Generate(),
                      #validation_steps=gen_val.steps_per_epoch,
                      shuffle=False,
-                     callbacks=[callback])
+                     callbacks=[callback, reduce_lr])
     toc = t.clock()
     # log time
     hist.history['time'] = [toc-tic]

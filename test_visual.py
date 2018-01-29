@@ -8,7 +8,7 @@
 
 
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+#os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 # --
 import numpy as np
@@ -16,7 +16,7 @@ import cPickle
 import matplotlib.pyplot as plt
 # --
 from net import Residual_SSD
-from data import DataGenerator
+from data import OnlineDataGenerator
 # --
 
 model = Residual_SSD(num_classes=2)
@@ -25,15 +25,29 @@ with open('output/simple_ssd/cts_sagittal_train/epoch_0.pkl', 'rb') as f:
     w = cPickle.load(f)
 model.set_weights(w)
 
-gen = DataGenerator(5, '/media/Data2/Jan/py-faster-rcnn/data/sagittal_projections/cts_train_large/', max_images=10, use_two_classes=True)
+aug_settings_train = {
+    'use_crop': True,
+    'zmuv_mean': 209.350884188,
+    'zmuv_std': 353.816477769
+}
+aug_settings_val = {
+    'use_crop': True,
+    'zmuv_mean': -103.361759224,
+    'zmuv_std': 363.301491674
+}
+gen = OnlineDataGenerator(batch_size=2, imageset_name='train_large',
+                          cts_root_path='/media/Data/Datasets/ct-spine',
+                          settings=aug_settings_train,
+                          use_two_classes=True)
 x_test, y_test = gen.Generate(shuffle=False).next()
 
 pred = model.predict(x_test, batch_size=5)
-print np.sum(pred[:,:,5:-4]>.7, axis=(1,2))
+print np.sum(pred[:,:,5:]>.5, axis=(1,2))
 
-pred[-1,0,5:-4]
+anchors = gen.anchor_generator.Generate(x_test.shape)
 
 #%%
+
 def display_img_and_boxes(img, pred, gt):
     fig, ax = plt.subplots(figsize=(12, 12))
     ax.imshow(img, aspect='equal')
@@ -60,12 +74,14 @@ def pred2bbox(anchor, pred):
 
 img_index = 0
 img = x_test[img_index,:,:,0]
-single_image = pred2bbox(pred[:,:,-4:],pred[:,:,:4])[img_index]
-top_k = np.argsort(-np.max(pred[img_index,:,5:-4], axis=-1))[:20] # k = 10
-plt.hist(pred[img_index,:,5])
-plt.show()
-print pred[img_index, top_k]
-display_img_and_boxes(img, single_image[top_k], y_test[img_index,:,:4])
+preds = pred2bbox(anchors,pred[:,:,:4])[img_index]
+gts = pred2bbox(anchors,y_test[:,:,:4])[img_index]
+top_k = np.argsort(-np.max(pred[img_index,:,5:], axis=-1))[:20] # k = 10
+# plt.hist(pred[img_index,:,5])
+# plt.show()
+# print pred[img_index, top_k]
+# print y_test[img_index,:,:4]
+display_img_and_boxes(img, preds[top_k], gts[y_test[img_index,:,5]==1])
 
 
 

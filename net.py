@@ -182,8 +182,8 @@ def Residual_SSD(num_classes=4, use_bn=False):
         net['softmax_bbox_conf_relu9'] = Activation('softmax')(net['resh_bbox_conf_relu9'])
         net['bbox_loc_relu9']  = Conv2D(4*len(anchors), (3,3), padding='same', name='relu9_bbox_loc')(net['relu9'])
         net['resh_bbox_loc_relu9'] = Reshape((-1,4))(net['bbox_loc_relu9'])
-        net['anchor_relu9'] = AnchorGeneratorLayer(feature_stride=32, offset=0, #119
-                                                     aspect_ratios=anchors, scale=2)(net['relu9'])
+        # net['anchor_relu9'] = AnchorGeneratorLayer(feature_stride=32, offset=0, #119
+        #                                              aspect_ratios=anchors, scale=2)(net['relu9'])
 
     # net['cat_loc'] = Concatenate(axis=1)([net['resh_bbox_loc_conv5_2'],
     #                                       net['resh_bbox_loc_conv6_2']])
@@ -196,8 +196,10 @@ def Residual_SSD(num_classes=4, use_bn=False):
     #                                      net['cat_anc']])
 
     net['output'] = Concatenate(axis=2)([net['resh_bbox_loc_relu9'],
-                                         net['softmax_bbox_conf_relu9'],
-                                         net['anchor_relu9']])
+                                         net['softmax_bbox_conf_relu9']
+                                         ])
+                                         # ,
+                                         # net['anchor_relu9']])
 
 
     return Model(net['input'], net['output'])

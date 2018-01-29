@@ -134,8 +134,9 @@ class AnchorGenerator(object):
             - input_shape. Tuple of positive ints. Shape of the input batch.
                            (batch_size, width, height, channels)
         # Returns
-            - anchors. numpy array of shape (num_anchors, 4) encoded as
-                       [center_x, center_y, width, height]
+            - anchors. numpy array of shape (num_anchors, 5) encoded as
+                       [center_x, center_y, width, height, valid_bit]
+                       valid_bit == 1 if the whole bbox is inside the image
         '''
         batch_size = input_shape[0]
         width = input_shape[1] // self.feature_stride
