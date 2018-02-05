@@ -27,7 +27,7 @@ import os
 import tensorflow as tf
 from keras.backend.tensorflow_backend import set_session
 config = tf.ConfigProto()
-config.gpu_options.per_process_gpu_memory_fraction = 0.5
+config.gpu_options.per_process_gpu_memory_fraction = 0.6
 set_session(tf.Session(config=config))
 # ------------------------------------------------------------------------------
 
@@ -64,14 +64,14 @@ gen_val = OnlineDataGenerator(batch_size=30, imageset_name='valid_large',
                                 use_two_classes=use_two_classes)
 data_val = next(gen_val.Generate())
 
-model = Residual_SSD(num_classes)
+model = Residual_SSD(num_classes, use_bn=True)
 #model.summary()
 ## Use Weightnorm with data-based initialization
-opt = SGDWithWeightnorm(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
-data_based_init(model, [next(gen_train.Generate()) for _ in range(100)])
+# opt = SGDWithWeightnorm(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
+# data_based_init(model, [next(gen_train.Generate()) for _ in range(10)]) # 100
 
 ## Use Adam
-# opt = keras.optimizers.Adam(lr=.0001)
+opt = keras.optimizers.Adam(lr=.0001)
 ## Use pre-trained weights
 #with open('output/simple_ssd/cts_sagittal_train/epoch_{:d}.pkl'.format(11)) as f:
 #    w = cPickle.load(f)
@@ -79,14 +79,13 @@ data_based_init(model, [next(gen_train.Generate()) for _ in range(100)])
 
 model.compile(loss=lambda y_true, y_pred: MultiboxLoss(y_true, y_pred, num_classes=num_classes),
               optimizer=opt)
-
 callback = keras.callbacks.TensorBoard(histogram_freq=1,
                                        batch_size=2,
                                        write_graph=True,
                                        write_grads=True,
                                        write_images=True,
-                                       log_dir='./logs/weightnorm_3')
-reduce_lr = keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5,
+                                       log_dir='./logs/adam_bn_1')
+reduce_lr = keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.1,
                               patience=20, mode='min', verbose='1')
 
 epochs = 1
@@ -96,6 +95,7 @@ results = {}
 t_start = t.clock()
 for e in xrange(epochs):
     tic = t.clock()
+    print 'starting...'
     hist = model.fit_generator(gen_train.Generate(),
                      steps_per_epoch=gen_train.steps_per_epoch,
                      epochs=150, verbose=1,

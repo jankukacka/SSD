@@ -110,19 +110,24 @@ class AnchorGenerator(object):
         '''
         # Arguments
             - feature_stride: int. Determines stride of features at the input
-                              layer.
+                    layer.
             - offset: int. Determines how many pixels at each edge are lost
-                      due to using 'valid' convolution mode. Set to 0 if
-                      using 'same' mode.
+                    due to using 'valid' convolution mode. Set to 0 if
+                    using 'same' mode.
             - aspect_ratios: iterable of aspect ratios (w/h) of anchor boxes
-            - scale: positive float. Determines the scale of the bounding boxes.
-                     If scale == 1, bboxes have width==feature_stride
+            - scale: positive float or a list of positive floats. Determines the
+                    scale of the bounding boxes. If scale == 1, bboxes have
+                    width==feature_stride
         '''
 
-        self.aspect_ratios = aspect_ratios[:]   # create a copy of the list
+        self.aspect_ratios = aspect_ratios[:]   ## create a copy of the list
         self.feature_stride = feature_stride
         self.offset = offset
-        self.scale = scale
+        ## Ensure the scale is in a list
+        try:
+            self.scale = [s for s in scale]
+        except:
+            self.scale = [scale]
 
     def Generate(self, input_shape):
         '''
@@ -150,14 +155,20 @@ class AnchorGenerator(object):
                            + self.feature_stride / 2
                            + self.offset)
 
-        anchors_centers = np.reshape(np.tile(anchors_centers, (1, len(self.aspect_ratios))), (-1,2))
+        anchors_centers = np.reshape(np.tile(anchors_centers,
+            (1, len(self.aspect_ratios) * len(self.scale))), (-1,2))
         anchors_centers = anchors_centers.astype('float32')
 
         ar = np.array(self.aspect_ratios)
-        size = self.feature_stride * self.scale
+        size = self.feature_stride # * self.scale
         widths = size*ar
         heights = size/ar
         sizes = np.transpose(np.vstack((widths, heights)), (1,0))
+
+        ## Duplicate for each scale
+        sizes = np.reshape(np.repeat(sizes[np.newaxis,:,:], len(self.scale), axis=0), (-1,2))
+        scales = np.repeat(self.scale, len(self.aspect_ratios))
+        sizes = sizes * scales[:, np.newaxis]
 
         sizes = np.reshape(sizes, (1,-1))
         sizes = np.tile(sizes, (1,width*height))

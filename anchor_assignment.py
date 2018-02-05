@@ -141,8 +141,8 @@ def _mark_boundary_boxes(anchors, assignment, input_shape):
     '''
     assignment = np.copy(assignment)
     # print 'valid anchors before', np.sum(assignment)
-    assignment = assignment * ((anchors[:,:,:2]-.5*anchors[:,:,2:]) > 0)
-    assignment = assignment * (anchors[:,:,:2]+.5*anchors[:,:,2:] <= input_shape)
+    assignment = assignment * np.all(anchors[:,:,:2]-.5*anchors[:,:,2:] > 0, axis=-1, keepdims=True)
+    assignment = assignment * np.all(anchors[:,:,:2]+.5*anchors[:,:,2:] <= input_shape, axis=-1, keepdims=True)
     # print 'valid anchors after', np.sum(assignment)
     return assignment
 
@@ -150,7 +150,9 @@ def _get_hard_negatives(assignment, num_negative):
     assignment = np.copy(assignment)
     for batch_index in xrange(assignment.shape[0]):
         bkg_anchors = np.where(assignment[batch_index,:] == 1)[0]
-        sample = np.random.choice(len(bkg_anchors), max(len(bkg_anchors) - num_negative[batch_index],0), replace=False)
+        if len(bkg_anchors) == 0:
+            continue
+        sample = np.random.choice(len(bkg_anchors), max(len(bkg_anchors) - num_negative[batch_index],1), replace=False)
         sample = bkg_anchors[sample]
         assignment[batch_index, sample] = 0
     return assignment
@@ -185,5 +187,7 @@ def Match(gt, anchors, num_classes, overlap_threshold, input_shape):
     assigned = np.sum(assignment[:,:,5:], axis=-1) != 0
     #print assignment[assigned]
     assignment[assigned,:4] = _compute_offsets(assignment[assigned,:4], anchors[assigned])
-    assignment[:,:,4] = _get_hard_negatives(assignment[:,:,4], 3*np.sum(assigned, axis=-1))
+    ## num negatives is max(3*num_positives, 5)
+    num_positives = np.sum(assigned, axis=-1)
+    assignment[:,:,4] = _get_hard_negatives(assignment[:,:,4], np.maximum(3*num_positives,5*np.ones_like(num_positives)))
     return assignment

@@ -1,9 +1,10 @@
 # ------------------------------------------------------------------------------
 #  Single Shot Multibox Detector for Vertebra detection
-#  Jan Kukacka, 11/2017
+#  Jan Kukacka, 2/2018
 #  jan.kukacka@tum.de
 # ------------------------------------------------------------------------------
-#  Testing of a trained SSD model with visualization of results
+#  Testing of a trained SSD model with visualization of results for spine
+#  bounding box prediction
 # ------------------------------------------------------------------------------
 
 
@@ -13,18 +14,15 @@ import os
 # --
 import numpy as np
 import cPickle
+from math import sqrt
 import matplotlib.pyplot as plt
 plt.rcParams['image.cmap'] = 'gray'
 # --
 from net import Residual_SSD
-from data import OnlineDataGenerator
+from data import OnlineSpineDataGenerator
+from anchor_generator_layer import AnchorGenerator
 # --
 
-model = Residual_SSD(num_classes=2, use_bn=True)
-
-with open('output/simple_ssd/cts_sagittal_train/epoch_0.pkl', 'rb') as f:
-    w = cPickle.load(f)
-model.set_weights(w)
 
 aug_settings_train = {
     'use_crop': True,
@@ -32,24 +30,39 @@ aug_settings_train = {
     'zmuv_std': 353.816477769
 }
 aug_settings_val = {
-    'use_crop': True,
+    'use_crop': False,
     'zmuv_mean': -103.361759224,
     'zmuv_std': 363.301491674
 }
-# gen = OnlineDataGenerator(batch_size=2, imageset_name='train_large',
-#                           cts_root_path='/media/Data/Datasets/ct-spine',
-#                           settings=aug_settings_train,
-#                           use_two_classes=True)
-gen = OnlineDataGenerator(batch_size=2, imageset_name='valid_large',
-                          cts_root_path='/media/Data/Datasets/ct-spine',
-                          settings=aug_settings_val,
-                          use_two_classes=True)
-x_test, y_test = gen.Generate(shuffle=False).next()
+aspect_ratios = [sqrt(4), sqrt(3), sqrt(2)]
+ag = AnchorGenerator(feature_stride=32,
+                     offset=0,
+                     aspect_ratios=aspect_ratios,
+                     scale=5)
+gen_train = OnlineSpineDataGenerator(batch_size=2, imageset_name='train_large',
+                                cts_root_path='/media/Data/Datasets/ct-spine',
+                                settings=aug_settings_train,
+                                overlap_threshold=.4,
+                                anchor_generator=ag)
+gen_val = OnlineSpineDataGenerator(batch_size=30, imageset_name='valid_large',
+                                cts_root_path='/media/Data/Datasets/ct-spine',
+                                settings=aug_settings_val,
+                                overlap_threshold=.4,
+                                anchor_generator=ag)
+
+x_test, y_test = gen_val.Generate(shuffle=False).next()
+
+model = Residual_SSD(num_classes=2, use_bn=True, aspect_ratios=aspect_ratios)
+
+with open('output/residual_ssd/cts_sagittal_train_spine/epoch_0.pkl', 'rb') as f:
+    w = cPickle.load(f)
+model.set_weights(w)
+
 
 pred = model.predict(x_test, batch_size=5)
 print np.sum(pred[:,:,5:]>.5, axis=(1,2))
 
-anchors = gen.anchor_generator.Generate(x_test.shape)
+anchors = ag.Generate(x_test.shape)
 
 #%%
 
@@ -77,16 +90,18 @@ def pred2bbox(anchor, pred):
     sizes = anchor[:,:,2:]*np.exp(pred[:,:,2:])
     return np.concatenate((centers, sizes), axis=-1)
 
-img_index = 0
+img_index = 29
 img = x_test[img_index,:,:,0]
 preds = pred2bbox(anchors,pred[:,:,:4])[img_index]
 gts = pred2bbox(anchors,y_test[:,:,:4])[img_index]
-top_k = np.argsort(-np.max(pred[img_index,:,5:], axis=-1))[:50] # k = 10
+top_k = np.argsort(-np.max(pred[img_index,:,5:], axis=-1))[:3] # k = 1
+pos = pred[img_index,:,5] > .99
 plt.hist(pred[img_index,:,5])
 plt.show()
 # print pred[img_index, top_k]
 # print y_test[img_index,:,:4]
 display_img_and_boxes(img, preds[top_k], gts[y_test[img_index,:,5]==1])
+display_img_and_boxes(img, preds[pos], gts[y_test[img_index,:,5]==1])
 
 
 

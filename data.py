@@ -100,6 +100,8 @@ class DataGenerator(object):
 
 
     def Generate(self, shuffle=True):
+        print 'Warning: This generator generates data in the old format (ground truth boxes only).'
+        print 'To get anchor offsets, use OnlineDataGenerator instead.'
         num_keys = len(self.image_index)
 
         def _prepare_batch(inputs, targets):
@@ -149,7 +151,9 @@ class OnlineDataGenerator(object):
     '''
 
     def __init__(self, batch_size, imageset_name, cts_root_path, settings,
-                 padding=0, min_voxels=500,max_images=-1, use_two_classes=False):
+                 padding=0, min_voxels=500,max_images=-1, use_two_classes=False,
+                 return_anchors=False, anchor_generator=None, overlap_threshold=.5,
+                 match_anchors=True):
         '''
         Initializes the data generator.
 
@@ -158,17 +162,35 @@ class OnlineDataGenerator(object):
             - imageset_name: string. Name of the imageset to use.
             - cts_root_path: string. Path to the root folder of the cts dataset.
             - padding: positive int. Number of pixels to use as padding around
-                       GT bounding boxes. Default 0.
+                        GT bounding boxes. Default 0.
             - min_voxels: positive int. Minimum number of pixels to consider a
-                          bounding box. Smaller ones are ignored. Default 500.
+                        bounding box. Smaller ones are ignored. Default 500.
             - max_images: int. Limits the number of images to use for the
-                          generator. If max_images < 0 or
-                          max_images > total_images, all images will be used.
+                        generator. If max_images < 0 or
+                        max_images > total_images, all images will be used.
+            - return_anchors: bool. If true, generator returns the anchors along
+                        with the offsets as the last four dimensions.
+                        Default False.
+            - use_two_classes: bool. If true, generator converts the labels of
+                        the vertebrae from [0..3] to [0,1]. Default False.
+            - anchor_generator: AnchorGenerator instance or a list thereof.
+                        If None (default), a generator with default settings
+                        is used. If supplying a list, they must be in the same
+                        order as predictions are concatenated in the used net.
             - settings: kwargs for DataAugmenter. For details see DataAugmenter.
+            - overlap_threshold: float in range [0;1]. Minimum threshold to
+                        consider an anchor to be responsible for a GT box.
+            - match_anchors: bool. Default True. If True, generates data as numpy
+                        arrays of anchors and their desired offsets. If False,
+                        generates data in the same format as the DataGenerator,
+                        i.e. array of gt bboxes.
         '''
         self.batch_size = batch_size
         self.padding = padding
         self.min_voxels = min_voxels
+        self.return_anchors = return_anchors
+        self.overlap_threshold = overlap_threshold
+        self.match_anchors = match_anchors
 
         # 3 vertebra categories
         if not use_two_classes:
@@ -185,13 +207,31 @@ class OnlineDataGenerator(object):
         self.steps_per_epoch = len(self.imageset_list) // batch_size
 
         self.augmenter = DataAugmenter(cts_root_path, **settings)
-        self.anchor_generator = AnchorGenerator(feature_stride=32,
-                                                offset=0,
-                                                aspect_ratios=[sqrt(0.5), 1],
-                                                scale=2)
+        if anchor_generator is None:
+            self.anchor_generator = AnchorGenerator(feature_stride=32,
+                                                    offset=0,
+                                                    aspect_ratios=[sqrt(0.5), 1],
+                                                    scale=2)
+        else:
+            self.anchor_generator = anchor_generator
 
 
     def get_augmented_img(self, image_id, depth=0):
+        '''
+        Returns an augmented version of an image from the ct-spine dataset.
+
+        # Arguments
+            - image_id: positive int. int-id of the desired image.
+            - depth: internal flag for stopping recursion in case a valid image
+                    generation fails.
+
+        # Returns
+            - img: numpy array of shape (height, width)
+            - bbox_info: bbox_info dictionary. For more info see dataset_sdk.bbox
+
+            If method fails to generate a valid image, it prints a message and
+            returns (None, None) tuple.
+        '''
         if depth > 5:
             print 'Could not generate valid input from image', image_id
             return None, None
@@ -206,12 +246,12 @@ class OnlineDataGenerator(object):
         ## Invalid images:
         if bbox_info['slice_count'] == 0:
             ## No bboxes
-            return self.get_augmented_img(image_id, depth+1)
+            return OnlineDataGenerator.get_augmented_img(self,image_id, depth+1)
         s = img.shape
         if 1.*s[0]/s[1] < 0.3 or \
            1.*s[1]/s[0] < 0.3: # originally .15
            ## Bad w/h ratio
-           return self.get_augmented_img(image_id, depth+1)
+           return OnlineDataGenerator.get_augmented_img(self,image_id, depth+1)
 
         ## all good!
         if len(self.classes) == 2:
@@ -246,15 +286,28 @@ class OnlineDataGenerator(object):
                 input_tensor[i, pad[0]:pad[0]+s[0], pad[1]:pad[1]+s[1], 0] = inputs[i]
 
                 bboxes = targets[i]['slices'][0]['bboxes']
-                for j in xrange(len(targets[i]['slices'][0]['bboxes'])):
+                for j in xrange(len(bboxes)):
                     target_tensor[i,j, :5] = dsdk.bbox.bbox_to_ccwhl(bboxes[j])
+                    ## Adjust labels for spine bounding boxes
+                    if 'is_spine' in bboxes[j] and bboxes[j]['is_spine']:
+                        target_tensor[i,j,4] = 1
                     target_tensor[i,j, :2] += pad[::-1] # adjust for padding
 
+            ## Old data format, now mostly for debugging
+            if not self.match_anchors:
+                return input_tensor, target_tensor
+
+            ## Generate anchors for this batch
             anchors = self.anchor_generator.Generate(input_tensor.shape)
-            target_tensor = Match(target_tensor, anchors, len(self.classes), .3, (input_tensor.shape[2],input_tensor.shape[1]))
-            # print target_tensor[np.sum(target_tensor[:,:,4:], axis=-1)==1,:4]
+            ## Match anchors to the ground truth boxes
+            target_tensor = Match(target_tensor, anchors, len(self.classes),
+                                  self.overlap_threshold,
+                                  (input_tensor.shape[2],input_tensor.shape[1]))
+
             ## This includes also anchors in the data
-            # target_tensor = np.concatenate((target_tensor, anchors), axis=-1)
+            if self.return_anchors:
+                target_tensor = np.concatenate((target_tensor, anchors), axis=-1)
+
             return input_tensor, target_tensor
 
         targets = []
@@ -275,3 +328,33 @@ class OnlineDataGenerator(object):
                     yield _prepare_batch(inputs, targets)
                     inputs = []
                     targets = []
+
+class OnlineSpineDataGenerator(OnlineDataGenerator):
+    '''
+    Data generator for whole spine bounding box predictions.
+    Derives from OnlineDataGenerator, just automatically converts bounding boxes
+    to one spine bbox.
+    '''
+
+    def __init__(self, **kwargs):
+        '''
+        For kwargs see OnlineDataGenerator args. They are passed directly through.
+        '''
+        super(OnlineSpineDataGenerator, self).__init__(**kwargs)
+        self.classes = ('__background__', # always index 0
+                        'spine')
+
+    def get_augmented_img(self, image_id):
+        '''
+        Like OnlineDataGenerator.get_augmented_img, but converts generated bboxes
+        to one large spine bbox.
+        '''
+
+        img, bbox_info = super(OnlineSpineDataGenerator, self).get_augmented_img(image_id)
+        ## If parent method fails, pass the negative result
+        if img is None:
+            return None, None
+        ## Extract spine bbox
+        bbox_info = dsdk.bbox.bbox_info_to_spine_bbox(bbox_info)
+
+        return img, bbox_info
