@@ -30,6 +30,7 @@ class DataAugmenter(object):
     def __init__(self, cts_root_path, **kwargs):
         '''
         kwargs: dictionary of extra parameters:
+            o 'aggregation_plane': [0 or 'coronal', 1 or 'axial', 2 or 'sagittal' (Default)]
             o 'crop_scale': float. Passed to get_crop().
             o 'crop_max': float. Passed to get_crop().
             o 'use_crop': bool. If False, no cropping occurs. Default True.
@@ -51,7 +52,7 @@ class DataAugmenter(object):
         aug_settings_keys = ['crop_scale', 'crop_max', 'use_crop',
                              'aggregation_noise', 'aggregation_scale',
                              'rotation_angle_range', 'contrast', 'zmuv_mean',
-                             'zmuv_std']
+                             'zmuv_std', 'aggregation_plane']
         self.aug_settings = { key: kwargs[key] for key in aug_settings_keys if key in kwargs}
         settings = self.aug_settings
         if not 'use_crop' in settings: settings['use_crop'] = True
@@ -59,6 +60,15 @@ class DataAugmenter(object):
         if not 'aggregation_noise' in settings: settings['aggregation_noise'] = 1
         if not 'rotation_angle_range' in settings: settings['rotation_angle_range'] = 5
         if not 'contrast' in settings: settings['contrast'] = 0
+        if not 'aggregation_plane' in kwargs: settings['aggregation_plane'] = 2
+        if settings['aggregation_plane'] == 'coronal':
+            settings['aggregation_plane'] = 0
+        if settings['aggregation_plane'] == 'axial':
+            settings['aggregation_plane'] = 1
+        if settings['aggregation_plane'] == 'sagittal':
+            settings['aggregation_plane'] = 2
+        if not settings['aggregation_plane'] in [0,1,2]:
+            settings['aggregation_plane'] = 2
         ## -----
         self.cts_root_path = cts_root_path
         self.cache = {}
@@ -78,8 +88,9 @@ class DataAugmenter(object):
         if not image_id in self.cache:
             img, img_header = dsdk.io.load_image(self.cts_root_path, image_id, True)
             seg = dsdk.io.load_segmentation(self.cts_root_path, image_id)
-            img, seg = normalize_resolution(img, seg, img_header)
-            masks, labels = aggregate_label_masks(seg)
+            img, seg = normalize_resolution(img, seg, img_header,
+                                            self.aug_settings['aggregation_plane'])
+            masks, labels = aggregate_label_masks(seg, axis=self.aug_settings['aggregation_plane'])
             self.cache[image_id] = (img, masks, labels)
         return self.cache[image_id]
 
@@ -108,15 +119,16 @@ class DataAugmenter(object):
             bboxes: list of bounding boxes
         '''
         settings = self.aug_settings
+        axis = settings['aggregation_plane']
         # Generate weights
-        x = xrange(img.shape[2])
-        scale = img.shape[2]/settings['aggregation_scale']
-        y = scipy.stats.norm.pdf(x, loc=img.shape[2]/2, scale=scale)
-        noise = np.random.normal(size=img.shape[2], loc=0, scale=y/3)
+        x = xrange(img.shape[axis])
+        scale = img.shape[axis]/settings['aggregation_scale']
+        y = scipy.stats.norm.pdf(x, loc=img.shape[axis]/2, scale=scale)
+        noise = np.random.normal(size=img.shape[axis], loc=0, scale=y/3)
 
         # aggregate sagittal projection
         sag_img = np.average(img,
-                             axis=2,
+                             axis=axis,
                              weights=np.abs(y+settings['aggregation_noise']*noise))
 
         # crop
@@ -157,16 +169,20 @@ class DataAugmenter(object):
         return sag_img, bboxes
 
 
-def normalize_resolution(img, seg, hdr):
+def normalize_resolution(img, seg, hdr, axis=2):
     '''
     Normalize image sagittal resolution to isotropic 1x1mm
+
+    # Arguments
+        - axis = [0,1,2] -  axis whose resolution should be preserved. Default 2.
     '''
     # Get real voxel dimensions
     res = np.array(medpy.io.header.get_pixel_spacing(hdr))
     # Get image dimensions
     imgDims = np.array(img.shape)
     # Set new image resolution
-    newRes = np.array([1,1,res[2]])
+    newRes = np.ones(3)
+    newRes[axis] = res[axis]
     # Set new image dimensions
     voxelRatio = newRes / res
     newDims = np.floor(imgDims / voxelRatio).astype(int)
@@ -174,13 +190,14 @@ def normalize_resolution(img, seg, hdr):
     seg = skimg_resize(seg, newDims, preserve_range = True, order = 0)
     return img, seg
 
-def aggregate_label_masks(seg):
+def aggregate_label_masks(seg, axis=2):
     '''
     Convert 3D volume of voxel labels into volume of 2D aggregated
     masks, one for each label present in the image.
 
     Parameters:
         seg: 3D array of voxel labels
+        axis: [0,1,2]. Along which axis to aggregate. Default is 2.
 
     Returns:
         3D array of masks [w*h*label_count]
@@ -190,10 +207,11 @@ def aggregate_label_masks(seg):
     max_label = int(np.max(seg))
     #print 'Labels range from {} to {}'.format(min_label, max_label)
 
-    masks = np.zeros((seg.shape[0], seg.shape[1],max_label-min_label+1), dtype=bool)
+    masks_shape = seg.shape[:axis] + seg.shape[axis+1:]
+    masks = np.zeros(masks_shape+(max_label-min_label+1,), dtype=bool)
     labels = range(min_label, max_label+1)
     for i in enumerate(labels):
-        masks[:,:,i[0]] = np.any(seg==i[1], axis=2)
+        masks[:,:,i[0]] = np.any(seg==i[1], axis=axis)
     return masks, list(enumerate(labels))
 
 def get_crop(orig_shape, **settings):

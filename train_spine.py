@@ -27,14 +27,14 @@ from anchor_generator_layer import AnchorGenerator
 ## Number of epochs to train
 num_epochs = 150
 
-## Option to save weight snapshots
-save_snapshots = True
+## Save snapshot every n-th epoch. If <= 0, no snapshots will be saved
+snapshot_epoch = 50
 
 ## Output folder for trained model
 output_folder = 'output/residual_ssd/cts_sagittal_train_spine/'
 
 ## Name of the run
-run_name = 'logs_spine/adam_bn_3'
+run_name = 'logs_spine/adam_bn_4'
 
 ## Use weight normalizaton training? If False, use Adam
 use_weightnorm = False
@@ -127,7 +127,8 @@ reduce_lr_callback = keras.callbacks.ReduceLROnPlateau(monitor='val_loss',
                             factor=0.1, patience=20, mode='min', verbose='1')
 
 def snapshot(model, epoch):
-    if epoch > 0 and epoch % 50 == 0:
+    epoch += 1 # 1-indexed epoch
+    if snapshot_epoch > 0 and epoch % snapshot_epoch == 0:
         w = model.get_weights()
         with open(output_folder + 'epoch_{}.pkl'.format(epoch), 'wb') as f:
             cPickle.dump(w, f)

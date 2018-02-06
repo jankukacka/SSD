@@ -153,7 +153,7 @@ class OnlineDataGenerator(object):
     def __init__(self, batch_size, imageset_name, cts_root_path, settings,
                  padding=0, min_voxels=500,max_images=-1, use_two_classes=False,
                  return_anchors=False, anchor_generator=None, overlap_threshold=.5,
-                 match_anchors=True):
+                 match_anchors=True, min_wh_ratio=0.3):
         '''
         Initializes the data generator.
 
@@ -184,6 +184,8 @@ class OnlineDataGenerator(object):
                         arrays of anchors and their desired offsets. If False,
                         generates data in the same format as the DataGenerator,
                         i.e. array of gt bboxes.
+            - min_wh_ratio: positive float. Smallest width/height or height/width
+                        ratio of generated image to be accepted. Default 0.3.
         '''
         self.batch_size = batch_size
         self.padding = padding
@@ -191,6 +193,7 @@ class OnlineDataGenerator(object):
         self.return_anchors = return_anchors
         self.overlap_threshold = overlap_threshold
         self.match_anchors = match_anchors
+        self.min_wh_ratio = min_wh_ratio
 
         # 3 vertebra categories
         if not use_two_classes:
@@ -248,8 +251,8 @@ class OnlineDataGenerator(object):
             ## No bboxes
             return OnlineDataGenerator.get_augmented_img(self,image_id, depth+1)
         s = img.shape
-        if 1.*s[0]/s[1] < 0.3 or \
-           1.*s[1]/s[0] < 0.3: # originally .15
+        if 1.*s[0]/s[1] < self.min_wh_ratio or \
+           1.*s[1]/s[0] < self.min_wh_ratio:
            ## Bad w/h ratio
            return OnlineDataGenerator.get_augmented_img(self,image_id, depth+1)
 

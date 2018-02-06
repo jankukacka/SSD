@@ -78,15 +78,16 @@ aug_settings_train = {
     'use_crop': True,
     'zmuv_mean': 209.350884188,
     'zmuv_std': 353.816477769,
-    'crop_max': 0.7
+    'crop_max': 0.7,
+    'aggregation_plane': 'coronal'
 }
-ag = AnchorGenerator(feature_stride=32, offset=0, aspect_ratios=[sqrt(4), sqrt(3), sqrt(2)], scale=5)
+ag = AnchorGenerator(feature_stride=32, offset=0, aspect_ratios=[sqrt(0.4), sqrt(0.25)], scale=(5,7.5))
 data_gen = OnlineSpineDataGenerator(batch_size=1, imageset_name='train_large',
                                 cts_root_path='/media/Data/Datasets/ct-spine',
                                 settings=aug_settings_train,
                                 anchor_generator=ag,
-                                overlap_threshold=.4,
-                                match_anchors=False)
+                                overlap_threshold=.6,
+                                match_anchors=False, min_wh_ratio=.05)
 aspects = []
 scales = []
 for _ in xrange(100):
