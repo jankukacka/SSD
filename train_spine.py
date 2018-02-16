@@ -31,10 +31,13 @@ num_epochs = 150
 snapshot_epoch = 50
 
 ## Output folder for trained model
-output_folder = 'output/residual_ssd/cts_sagittal_train_spine/'
+output_folder = 'output/residual_ssd/cts_sagittal_max_train_spine/'
 
 ## Name of the run
 run_name = 'logs_spine/adam_bn_4'
+
+## Projection type ('mean' or 'max')
+aggregation_method = 'max'
 
 ## Use weight normalizaton training? If False, use Adam
 use_weightnorm = False
@@ -72,13 +75,15 @@ aug_settings_train = {
     'use_crop': True,
     'max_crop': 0.7,
     'zmuv_mean': 209.350884188,
-    'zmuv_std': 353.816477769
+    'zmuv_std': 353.816477769,
+    'aggregation_method': aggregation_method
 }
 aug_settings_val = {
     'use_crop': True,
     'max_crop': 0.7,
     'zmuv_mean': -103.361759224,
-    'zmuv_std': 363.301491674
+    'zmuv_std': 363.301491674,
+    'aggregation_method': aggregation_method
 }
 aspect_ratios = [sqrt(2.5), sqrt(3.5)]
 scales = (5,7.5)

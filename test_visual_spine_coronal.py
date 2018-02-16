@@ -4,11 +4,12 @@
 #  jan.kukacka@tum.de
 # ------------------------------------------------------------------------------
 #  Testing of a trained SSD model with visualization of results for spine
-#  bounding box prediction
+#  bounding box prediction in coronal projections
 # ------------------------------------------------------------------------------
 
 
 # --
+import os
 import numpy as np
 import cPickle
 from math import sqrt
@@ -22,49 +23,77 @@ from utils import nms, aggregate_bboxes_ccwh
 from multibox_loss import MultiboxLoss
 # --
 
-import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+# ------------------------------------------------------------------------------
+## Parameters
+# ------------------------------------------------------------------------------
+## Snapshot iteration number
+snapshot_number = 150
 
+## Axis (coronal/sagittal)
+aggregation_plane = 'coronal'
 
-aug_settings_train = {
+## Projection (mean/max)
+aggregation_method = 'max'
+
+## Folder with the trained model
+snapshot_folder = 'output/residual_ssd/cts_{}_{}_train_spine/'.format(aggregation_plane, aggregation_method)
+
+## Use CPU only?
+cpu_only = True
+
+## Validation (True) or training (False) data?
+use_validation = True
+# ------------------------------------------------------------------------------
+
+if cpu_only:
+    os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+
+aug_settings = {
     'use_crop': True,
-    'zmuv_mean': 209.350884188,
-    'zmuv_std': 353.816477769
+    'max_crop': 0.7,
+    'aggregation_plane': aggregation_plane,
+    'aggregation_method': aggregation_method
 }
-aug_settings_val = {
-    'use_crop': False,
-    'zmuv_mean': -103.361759224,
-    'zmuv_std': 363.301491674,
-}
-aspect_ratios = [sqrt(2.5), sqrt(3.5)]
-scales = (5,7.5)
+if aggregation_plane == 'coronal' and aggregation_method == 'mean':
+    aug_settings['aggregation_scale'] = 0.01
+
+if use_validation:
+    aug_settings['zmuv_mean'] = -103.361759224
+    aug_settings['zmuv_std'] = 363.301491674
+    imageset_name = 'valid_large'
+else:
+    aug_settings['zmuv_mean'] = 209.350884188
+    aug_settings['zmuv_std'] = 353.816477769
+    imageset_name = 'train_large'
+
+if aggregation_plane == 'coronal':
+    aspect_ratios = [sqrt(.2), sqrt(.4)]
+    scales = (5,6.5)
+    min_wh_ratio=.05
+else:
+    aspect_ratios = [sqrt(2.5), sqrt(3.5)]
+    scales = (5,7.5)
+    min_wh_ratio=.3
+
 ag = AnchorGenerator(feature_stride=32,
                      offset=0,
                      aspect_ratios=aspect_ratios,
                      scale=scales)
-gen_train = OnlineSpineDataGenerator(batch_size=2, imageset_name='train_large',
-                                cts_root_path='/media/Data/Datasets/ct-spine',
-                                settings=aug_settings_train,
-                                overlap_threshold=.4,
-                                anchor_generator=ag)
-gen_val = OnlineSpineDataGenerator(batch_size=5, imageset_name='valid_large',
-                                cts_root_path='/media/Data/Datasets/ct-spine',
-                                settings=aug_settings_val,
-                                overlap_threshold=.4,
-                                anchor_generator=ag)
-
-x_test, y_test = gen_val.Generate(shuffle=False).next()
+gen = OnlineSpineDataGenerator(batch_size=5, imageset_name=imageset_name,
+                               cts_root_path='/media/Data/Datasets/ct-spine',
+                               settings=aug_settings,
+                               overlap_threshold=.5,
+                               anchor_generator=ag,
+                               min_wh_ratio=min_wh_ratio)
+x_test, y_test = gen.Generate(shuffle=False).next()
 
 model = Residual_SSD(num_classes=2, use_bn=True, num_anchors=len(aspect_ratios)*len(scales))
 
-with open('output/residual_ssd/cts_sagittal_train_spine/epoch_100.pkl', 'rb') as f:
+with open(os.path.join(snapshot_folder, 'epoch_{}.pkl'.format(snapshot_number)), 'rb') as f:
     w = cPickle.load(f)
 model.set_weights(w)
 
-
 pred = model.predict(x_test, batch_size=5)
-print np.sum(pred[:,:,5:]>.9, axis=(1,2))
-
 anchors = ag.Generate(x_test.shape)
 
 #%%
@@ -93,15 +122,18 @@ def pred2bbox(anchor, pred):
     sizes = anchor[:,:,2:]*np.exp(pred[:,:,2:])
     return np.concatenate((centers, sizes), axis=-1)
 
-img_index = 4
+img_index = 0
 img = x_test[img_index,:,:,0]
 preds = pred2bbox(anchors,pred[:,:,:4])[img_index]
 gts = pred2bbox(anchors,y_test[:,:,:4])[img_index]
-top_k = np.argsort(-np.max(pred[img_index,:,5:], axis=-1))[:5] # k = 1
-pos = pred[img_index,:,5] > .9
+top_k = np.argsort(-np.max(pred[img_index,:,5:], axis=-1))[:5] # k = 10
+pos = pred[img_index,:,5] > .90
 
 aggregated = aggregate_bboxes_ccwh(preds[pos,:4], 'mean')
 display_img_and_boxes(img, aggregated[np.newaxis,:], gts[y_test[img_index,:,5]==1])
+aggregated = aggregate_bboxes_ccwh(preds[top_k,:4], 'mean')
+display_img_and_boxes(img, aggregated[np.newaxis,:], gts[y_test[img_index,:,5]==1])
+
 
 #%%
 keep = nms(pred[:,:,[0,1,2,3,5]][img_index, pos], sigma=0.01, cutoff=0.5)
@@ -114,41 +146,3 @@ display_img_and_boxes(img, preds[top_k], gts[y_test[img_index,:,5]==1])
 display_img_and_boxes(img, preds[keep], gts[y_test[img_index,:,5]==1])
 
 #%%
-# --
-import numpy as np
-from math import sqrt
-import matplotlib.pyplot as plt
-plt.rcParams['image.cmap'] = 'gray'
-# --
-from data import OnlineSpineDataGenerator
-from anchor_generator_layer import AnchorGenerator
-from utils import aggregate_bboxes_ccwh
-
-aug_settings_val = {
-    'use_crop': False,
-    'zmuv_mean': -103.361759224,
-    'zmuv_std': 363.301491674,
-    'aggregation_plane': 'coronal',
-    'aggregation_scale':0.01
-}
-aspect_ratios = [sqrt(2.5), sqrt(3.5)]
-scales = (5,7.5)
-ag = AnchorGenerator(feature_stride=32,
-                     offset=0,
-                     aspect_ratios=aspect_ratios,
-                     scale=scales)
-gen_val = OnlineSpineDataGenerator(batch_size=1, imageset_name='valid_large',
-                                cts_root_path='/media/Data/Datasets/ct-spine',
-                                settings=aug_settings_val,
-                                overlap_threshold=.01,
-                                anchor_generator=ag)
-
-x_test, y_test = gen_val.Generate(shuffle=False).next()
-anchors = ag.Generate(x_test.shape)
-
-gts = pred2bbox(anchors,y_test[:,:,:4])[0]
-
-display_img_and_boxes(x_test[0,:,:,0], np.zeros((1,4)), gts[y_test[0,:,5]==1])
-
-# plt.imshow(x_test[0,:,:,0])
-# plt.show()

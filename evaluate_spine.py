@@ -11,20 +11,27 @@
 ## Parameters
 # ------------------------------------------------------------------------------
 ## Generate a validation dataset
-generate_validation_data = False
+generate_validation_data = True
 
 ## Run evaluation. If False, existing file with predictions will be used
-evaluate = False
+evaluate = True
 
 ## Interactive mode. If true, will display the plot inline. If false, will save
 ## the plot into a file
 interactive = False
 
+## Axis (coronal/sagittal)
+aggregation_plane = 'coronal'
+
+## Projection (mean/max)
+aggregation_method = 'max'
+
 ## Output folder for trained model
-model_snapshot = 'output/residual_ssd/cts_sagittal_train_spine/epoch_{}.pkl'.format(100)
+model_snapshot = 'output/residual_ssd/cts_{}_{}_train_spine/epoch_{}.pkl'.format(
+                        aggregation_plane, aggregation_method, 150)
 
 ## Use CPU only?
-cpu_only = False
+cpu_only = True
 # ------------------------------------------------------------------------------
 
 import os
@@ -46,39 +53,61 @@ from utils import aggregate_bboxes_ccwh
 from multibox_loss import MultiboxLoss
 # --
 
+def pred2bbox(anchor, pred):
+    centers = anchor[:,:,2:]*pred[:,:,:2] + anchor[:,:,:2]
+    sizes = anchor[:,:,2:]*np.exp(pred[:,:,2:])
+    return np.concatenate((centers, sizes), axis=-1)
+
+
+if aggregation_plane == 'sagittal':
+    aspect_ratios = [sqrt(2.5), sqrt(3.5)]
+    scales = (5,7.5)
+else:
+    aspect_ratios = [sqrt(.2), sqrt(.4)]
+    scales = (5,6.5)
+    
 ## Generate tesing data
 if generate_validation_data:
     aug_settings_val = {
         'use_crop': True,
         'max_crop': 0.7,
         'zmuv_mean': -103.361759224,
-        'zmuv_std': 363.301491674
+        'zmuv_std': 363.301491674,
+        'aggregation_method': aggregation_method,
+        'aggregation_plane': aggregation_plane
     }
-    aspect_ratios = [sqrt(2.5), sqrt(3.5)]
-    scales = (5,7.5)
+    if aggregation_plane == 'coronal' and aggregation_method == 'mean':
+        aug_settings_val['aggregation_scale'] = 0.01
+
     ag = AnchorGenerator(feature_stride=32,
                          offset=0,
                          aspect_ratios=aspect_ratios,
                          scale=scales)
+    if aggregation_plane == 'coronal':
+        min_wh_ratio=.05
+    else:
+        min_wh_ratio=.3
+
     gen_val = OnlineSpineDataGenerator(batch_size=100, imageset_name='valid_large',
                                     cts_root_path='/media/Data/Datasets/ct-spine',
                                     settings=aug_settings_val,
-                                    overlap_threshold=.4,
-                                    anchor_generator=ag)
+                                    overlap_threshold=.5,
+                                    anchor_generator=ag,
+                                    min_wh_ratio=min_wh_ratio)
 
     x_test, y_test = gen_val.Generate(shuffle=False).next()
     anchors = ag.Generate(x_test.shape)
 
-    with open('output/validation.pkl', 'wb') as f:
+    with open('output/validation_{}_{}.pkl'.format(aggregation_plane, aggregation_method), 'wb') as f:
         cPickle.dump((x_test,y_test,anchors), f)
 # %%
 if evaluate:
     ## Run predictions
     ## Load dataset
-    with open('output/validation.pkl', 'rb') as f:
+    with open('output/validation_{}_{}.pkl'.format(aggregation_plane, aggregation_method), 'rb') as f:
         (x_test, y_test, anchors) = cPickle.load(f)
     model = Residual_SSD(num_classes=2, use_bn=True, num_anchors=len(aspect_ratios)*len(scales))
-    with open('output/residual_ssd/cts_sagittal_train_spine/epoch_100.pkl', 'rb') as f:
+    with open(model_snapshot, 'rb') as f:
         w = cPickle.load(f)
     model.set_weights(w)
 
@@ -89,12 +118,12 @@ if evaluate:
     ## Compute results
     preds = pred2bbox(anchors,output[:,:,:4])
     gts = pred2bbox(anchors,y_test[:,:,:4])
-    with open('output/predictions.pkl', 'wb') as f:
+    with open('output/predictions_{}_{}.pkl'.format(aggregation_plane, aggregation_method), 'wb') as f:
         cPickle.dump((output,loss,preds,gts), f)
 #%%
 ## Load predictions
 if not evaluate:
-    with open('output/predictions.pkl', 'rb') as f:
+    with open('output/predictions_{}_{}.pkl'.format(aggregation_plane, aggregation_method), 'rb') as f:
         (output,loss,preds,gts) = cPickle.load(f)
 #%%
 ## Compute batch IOU with various aggregation methods
@@ -107,7 +136,7 @@ results = np.zeros((preds.shape[0], 12))
 for img_index in xrange(preds.shape[0]):
     gtbox = gts[img_index, y_test[img_index,:,5]==1]
     if gtbox.size == 0:
-        #print 'No GT box for image', img_index
+        print 'No GT box for image', img_index
         continue
     gtbox = gtbox[0]
     top_5 = np.argsort(-np.max(output[img_index,:,5:], axis=-1))[:5] # k = 1
@@ -166,7 +195,7 @@ plt.title('Evaluation of aggregation methods')
 if interactive:
     plt.show()
 else:
-    plt.savefig('output/aggregations_plot.png', bbox_inches='tight')
+    plt.savefig('output/aggregations_plot_{}_{}.png'.format(aggregation_plane, aggregation_method), bbox_inches='tight')
 ## Tabular results
 for i in xrange(results.shape[1]):
     print '{:15} {:.2f} +- {:.4f} | med = {:.2f}'.format(labels[i], np.mean(results[:,i]), np.std(results[:,i]), np.median(results[:,i]))

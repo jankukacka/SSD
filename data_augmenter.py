@@ -36,23 +36,25 @@ class DataAugmenter(object):
             o 'use_crop': bool. If False, no cropping occurs. Default True.
             o 'aggregation_noise': float. Amount of noise on slice weights. Default 1.0.
             o 'aggregation_scale': float. How much should central slices be
-                                          preferred over sides. Lower numbers
-                                          mean more balanced weighting. Default 10.
+                        preferred over sides. Lower numbers
+                        mean more balanced weighting. Default 10.
+            o 'aggregation_method': 'mean' (Default) or 'max'. Type of the
+                        projection
             o 'rotation_angle_range': float. Rotation angle is selected uniformly
-                                             between +- this value. Default 5.0.
+                        between +- this value. Default 5.0.
             o 'contrast': float. Image contrast may be enhanced. Value should
-                                 be in a range [0;0.1]. Default 0.
+                        be in a range [0;0.1]. Default 0.
             o 'zmuv_mean': float. Zero-mean-unit-variance correction mean.
-                                  Not used if not present together with 'zmuv_std'.
+                        Not used if not present together with 'zmuv_std'.
             o 'zmuv_std': float. Zero-mean-unit-variance correction std. dev.
-                                  Not used if not present together with 'zmuv_mean'.
+                        Not used if not present together with 'zmuv_mean'.
 
         '''
         ## Parse kwargs
         aug_settings_keys = ['crop_scale', 'crop_max', 'use_crop',
                              'aggregation_noise', 'aggregation_scale',
                              'rotation_angle_range', 'contrast', 'zmuv_mean',
-                             'zmuv_std', 'aggregation_plane']
+                             'zmuv_std', 'aggregation_plane', 'aggregation_method']
         self.aug_settings = { key: kwargs[key] for key in aug_settings_keys if key in kwargs}
         settings = self.aug_settings
         if not 'use_crop' in settings: settings['use_crop'] = True
@@ -60,6 +62,7 @@ class DataAugmenter(object):
         if not 'aggregation_noise' in settings: settings['aggregation_noise'] = 1
         if not 'rotation_angle_range' in settings: settings['rotation_angle_range'] = 5
         if not 'contrast' in settings: settings['contrast'] = 0
+        if not 'aggregation_method' in kwargs: settings['aggregation_method'] = 'mean'
         if not 'aggregation_plane' in kwargs: settings['aggregation_plane'] = 2
         if settings['aggregation_plane'] == 'coronal':
             settings['aggregation_plane'] = 0
@@ -120,6 +123,8 @@ class DataAugmenter(object):
         '''
         settings = self.aug_settings
         axis = settings['aggregation_plane']
+        aggregation_method = settings['aggregation_method']
+
         # Generate weights
         x = xrange(img.shape[axis])
         scale = img.shape[axis]/settings['aggregation_scale']
@@ -127,9 +132,12 @@ class DataAugmenter(object):
         noise = np.random.normal(size=img.shape[axis], loc=0, scale=y/3)
 
         # aggregate sagittal projection
-        sag_img = np.average(img,
-                             axis=axis,
-                             weights=np.abs(y+settings['aggregation_noise']*noise))
+        if aggregation_method == 'mean':
+            sag_img = np.average(img,
+                                 axis=axis,
+                                 weights=np.abs(y+settings['aggregation_noise']*noise))
+        else:
+            sag_img = np.max(img, axis=axis)
 
         # crop
         if settings['use_crop']:
