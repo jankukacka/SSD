@@ -74,7 +74,7 @@ def _assign_boxes(gt_boxes, anchors, num_classes, overlap_threshold):
     # assign all as background
     result[:,:,4] = 1
 
-    while(np.max(ious) >= overlap_threshold):
+    while(ious.size > 0 and np.max(ious) >= overlap_threshold):
         max_iou_index = np.unravel_index(ious.argmax(), ious.shape)
         batch_index = max_iou_index[0]
         bbox_index = max_iou_index[1]

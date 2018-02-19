@@ -39,10 +39,6 @@ aggregation_method = 'mean'
 ## Axis (coronal/sagittal)
 aggregation_plane = 'sagittal'
 
-## Output folder for trained model
-output_folder = 'output/residual_ssd/cts_{}_{}_train_spine/'.format(
-    aggregation_plane, aggregation_method)
-
 ## Use weight normalizaton training? If False, use Adam
 use_weightnorm = False
 
@@ -71,6 +67,10 @@ def main():
     set_session(tf.Session(config=config))
     # ------------------------------------------------------------------------------
 
+    ## Output folder for trained model
+    output_folder = 'output/residual_ssd/cts_{}_{}_train_spine/'.format(
+    aggregation_plane, aggregation_method)
+
     def ensure_dirs(path):
         import errno
 
@@ -95,7 +95,7 @@ def main():
         }
         if aggregation_plane == 'coronal' and aggregation_method == 'mean':
             settings['aggregation_scale'] = 0.01
-    return settings
+        return settings
 
 
     aug_settings_train = get_augmenter_settings(209.350884188, 353.816477769,
