@@ -153,7 +153,7 @@ class OnlineDataGenerator(object):
     def __init__(self, batch_size, imageset_name, cts_root_path, settings,
                  padding=0, min_voxels=500,max_images=-1, use_two_classes=False,
                  return_anchors=False, anchor_generator=None, overlap_threshold=.5,
-                 match_anchors=True, min_wh_ratio=0.3):
+                 match_anchors=True, min_wh_ratio=0.3, return_padding=False):
         '''
         Initializes the data generator.
 
@@ -186,11 +186,16 @@ class OnlineDataGenerator(object):
                         i.e. array of gt bboxes.
             - min_wh_ratio: positive float. Smallest width/height or height/width
                         ratio of generated image to be accepted. Default 0.3.
+            - return_padding: If true, returns list of used padding offsets as
+                        the third element of the returned tuple. Default False.
+        # Returns:
+            depends on the used arguments.
         '''
         self.batch_size = batch_size
         self.padding = padding
         self.min_voxels = min_voxels
         self.return_anchors = return_anchors
+        self.return_padding = return_padding
         self.overlap_threshold = overlap_threshold
         self.match_anchors = match_anchors
         self.min_wh_ratio = min_wh_ratio
@@ -281,12 +286,14 @@ class OnlineDataGenerator(object):
             input_tensor = np.zeros((self.batch_size, max_dims[0], max_dims[1],1))
             # zero padded input for some reason
             target_tensor = np.zeros((self.batch_size, max_bboxes, 8+len(self.classes)))
+            paddings = []
 
             for i in xrange(self.batch_size):
                 s = np.array(inputs[i].shape)
                 pad = (max_dims - s) // 2 # pad around all edges
                 input_tensor[i] = inputs[i].min() # pad image with the lowest value (simulating air)
                 input_tensor[i, pad[0]:pad[0]+s[0], pad[1]:pad[1]+s[1], 0] = inputs[i]
+                paddings.append(pad)
 
                 bboxes = targets[i]['slices'][0]['bboxes']
                 for j in xrange(len(bboxes)):
@@ -311,7 +318,12 @@ class OnlineDataGenerator(object):
             if self.return_anchors:
                 target_tensor = np.concatenate((target_tensor, anchors), axis=-1)
 
-            return input_tensor, target_tensor
+            result = input_tensor, target_tensor
+            ## Include paddings in the result. Important for predictions.
+            if self.return_padding:
+                result += (paddings,)
+
+            return result
 
         targets = []
         inputs = []

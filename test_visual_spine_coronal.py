@@ -29,6 +29,13 @@ from multibox_loss import MultiboxLoss
 ## Snapshot iteration number
 snapshot_number = 150
 
+## Dataset details
+dataset_path = '/media/Data/Datasets/' + ['ct-spine', 'cts-xvertseg'][1]
+imageset_name = ['train_large','valid_large','xvertseg_train'][2]
+
+## Use augmentation or classify raw data
+use_augmentaion = False
+
 ## Axis (coronal/sagittal)
 aggregation_plane = 'coronal'
 
@@ -41,8 +48,8 @@ snapshot_folder = 'output/residual_ssd/cts_{}_{}_train_spine/'.format(aggregatio
 ## Use CPU only?
 cpu_only = True
 
-## Validation (True) or training (False) data?
-use_validation = True
+## Number of images to predict
+num_images = 15
 # ------------------------------------------------------------------------------
 
 if cpu_only:
@@ -57,14 +64,21 @@ aug_settings = {
 if aggregation_plane == 'coronal' and aggregation_method == 'mean':
     aug_settings['aggregation_scale'] = 0.01
 
-if use_validation:
+if not use_augmentaion:
+    aug_settings['use_crop'] = False
+    aug_settings['aggregation_noise'] = 0
+    aug_settings['rotation_angle_range'] = 0
+
+if imageset_name == 'valid_large':
     aug_settings['zmuv_mean'] = -103.361759224
     aug_settings['zmuv_std'] = 363.301491674
-    imageset_name = 'valid_large'
-else:
+elif imageset_name == 'train_large':
     aug_settings['zmuv_mean'] = 209.350884188
     aug_settings['zmuv_std'] = 353.816477769
-    imageset_name = 'train_large'
+elif imageset_name == 'xvertseg_train':
+    aug_settings['zmuv_mean'] = 362.0
+    aug_settings['zmuv_std'] = 456.0
+
 
 if aggregation_plane == 'coronal':
     aspect_ratios = [sqrt(.2), sqrt(.4)]
@@ -79,13 +93,16 @@ ag = AnchorGenerator(feature_stride=32,
                      offset=0,
                      aspect_ratios=aspect_ratios,
                      scale=scales)
-gen = OnlineSpineDataGenerator(batch_size=5, imageset_name=imageset_name,
-                               cts_root_path='/media/Data/Datasets/ct-spine',
+gen = OnlineSpineDataGenerator(batch_size=num_images,
+                               imageset_name=imageset_name,
+                               cts_root_path=dataset_path,
                                settings=aug_settings,
                                overlap_threshold=.5,
                                anchor_generator=ag,
-                               min_wh_ratio=min_wh_ratio)
-x_test, y_test = gen.Generate(shuffle=False).next()
+                               min_wh_ratio=min_wh_ratio,
+                               return_padding=True,
+                               return_anchors=True)
+x_test, y_test, paddings = gen.Generate(shuffle=False).next()
 
 model = Residual_SSD(num_classes=2, use_bn=True, num_anchors=len(aspect_ratios)*len(scales))
 
@@ -94,7 +111,8 @@ with open(os.path.join(snapshot_folder, 'epoch_{}.pkl'.format(snapshot_number)),
 model.set_weights(w)
 
 pred = model.predict(x_test, batch_size=5)
-anchors = ag.Generate(x_test.shape)
+anchors = y_test[:,:,-4:]
+y_test = y_test[:,:,:-4]
 
 #%%
 
@@ -122,17 +140,40 @@ def pred2bbox(anchor, pred):
     sizes = anchor[:,:,2:]*np.exp(pred[:,:,2:])
     return np.concatenate((centers, sizes), axis=-1)
 
-img_index = 0
+img_index = 2
+pad = paddings[img_index]
+cur_anchors = np.copy(anchors)
+cur_anchors[img_index,:,:2] -= pad[::-1]
+crop_img = x_test[img_index,pad[0]:-pad[0],pad[1]:-pad[1],0]
 img = x_test[img_index,:,:,0]
+crop_preds = pred2bbox(cur_anchors,pred[:,:,:4])[img_index]
+crop_gts = pred2bbox(cur_anchors,y_test[:,:,:4])[img_index]
 preds = pred2bbox(anchors,pred[:,:,:4])[img_index]
 gts = pred2bbox(anchors,y_test[:,:,:4])[img_index]
+
 top_k = np.argsort(-np.max(pred[img_index,:,5:], axis=-1))[:5] # k = 10
 pos = pred[img_index,:,5] > .90
 
-aggregated = aggregate_bboxes_ccwh(preds[pos,:4], 'mean')
-display_img_and_boxes(img, aggregated[np.newaxis,:], gts[y_test[img_index,:,5]==1])
+# aggregated = aggregate_bboxes_ccwh(preds[pos,:4], 'mean')
+# display_img_and_boxes(img, aggregated[np.newaxis,:], gts[y_test[img_index,:,5]==1])
+aggregated = aggregate_bboxes_ccwh(crop_preds[top_k,:4], 'mean')
+display_img_and_boxes(crop_img, aggregated[np.newaxis,:], crop_gts[y_test[img_index,:,5]==1])
 aggregated = aggregate_bboxes_ccwh(preds[top_k,:4], 'mean')
 display_img_and_boxes(img, aggregated[np.newaxis,:], gts[y_test[img_index,:,5]==1])
+
+#%%
+
+for i in xrange(x_test.shape[0]):
+    pad = paddings[i]
+    cur_anchors = np.copy(anchors)
+    cur_anchors[i,:,:2] -= pad[::-1]
+    crop_preds = pred2bbox(cur_anchors,pred[:,:,:4])[i]
+    crop_gts = pred2bbox(cur_anchors,y_test[:,:,:4])[i]
+
+    top_k = np.argsort(-np.max(pred[i,:,5:], axis=-1))[:5] # k = 10
+    aggregated = aggregate_bboxes_ccwh(crop_preds[top_k,:4], 'mean')
+    print aggregated
+
 
 
 #%%
