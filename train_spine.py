@@ -17,11 +17,11 @@ import argparse
 import keras.callbacks
 from math import sqrt
 # --
-from net import Residual_SSD
-from multibox_loss import MultiboxLoss
-from data import OnlineSpineDataGenerator
-from weightnorm import SGDWithWeightnorm, data_based_init
-from anchor_generator_layer import AnchorGenerator
+from lib.net import Residual_SSD
+from lib.multibox_loss import MultiboxLoss
+from lib.data import OnlineSpineDataGenerator
+from lib.weightnorm import SGDWithWeightnorm, data_based_init
+from lib.anchor_generator_layer import AnchorGenerator
 # --
 
 # ------------------------------------------------------------------------------

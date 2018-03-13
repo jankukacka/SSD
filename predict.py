@@ -7,17 +7,17 @@
 # ------------------------------------------------------------------------------
 
 
-# # --
+# --
 import medpy.io
 import numpy as np
 import cPickle
 from math import sqrt
-# # --
-from net import Residual_SSD
-from anchor_generator_layer import AnchorGenerator
-from utils import aggregate_bboxes_ccwh
+# --
+from lib.net import Residual_SSD
+from lib.anchor_generator_layer import AnchorGenerator
+from lib.utils import aggregate_bboxes_ccwh
 from skimage.transform import resize as skimg_resize
-# # --
+# --
 
 def predict(filename):
     '''
